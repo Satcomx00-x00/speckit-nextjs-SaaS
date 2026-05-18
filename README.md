@@ -6,21 +6,21 @@ This preset ships **behaviors, not a tech stack**. It does not pick your ORM, st
 
 ## What's inside
 
-| File | Role |
-|---|---|
-| `templates/constitution-template.md` | The project **directive**. Replaces the core constitution template. Encodes principles, phased criticality, and the full behavior matrix across Frontend, Backend, Security, Performance, TypeScript & Code Quality, and Infrastructure & Operations. |
-| `templates/agent-context.md` | The **global agent rules**. A compressed, always-on operating manual for AI coding agents working on the project. Mirror it into the agent's context file (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, etc.). |
-| `commands/speckit.constitution.scan.md` | Command **`/speckit.constitution.scan`**. Sibling to `/speckit.constitution`: scans the repository (Markdown docs, `package.json`, `tsconfig.json`, Next.js structure, tooling, CI) and exports `.specify/memory/constitution.md` with a Sync Impact Report mapping evidence to every Critical directive. |
-| `commands/speckit.audit.md` | Command **`/speckit.audit`**. Audits the codebase against the TypeScript and Next.js behavioral directives. Runs the audit script, persists the JSON to `.specify/audits/`, and produces a prioritized human-readable report grouped by severity and section. |
-| `commands/speckit.audit.deep.md` | Command **`/speckit.audit.deep`**. Same scope as `/speckit.audit`, then layers `tsc --noEmit`, `eslint`, `npm audit`, file-level read-throughs, and cross-file LLM analysis. Inspects every `"use server"` file for the parse → authorize → ownership → DTO recipe. Persists to `.specify/audits/deep/`. |
-| `commands/speckit.plan.md` | Command **`/speckit.plan`**. Next.js-specialized feature planning. Decomposes a feature into routes, RSC/client boundaries, Server Actions, Route Handlers, DAL methods, schema validators, caching strategy, prerendering strategy, metadata, accessibility checkpoints, error handling, security checklist, and a testing plan — all tagged with Phase and Criticality. |
-| `commands/speckit.tasks.md` | Command **`/speckit.tasks`**. Next.js-shaped task generation from a plan. Produces dependency-ordered tasks: schema first, then DAL, then Server Actions, then route scaffold, then RSC components, client islands, Route Handlers, metadata, skeletons, and tests. Each task has Next.js-idiomatic titles, acceptance criteria, and constitution directive references. |
-| `commands/speckit.scaffold.route.md` | Command **`/speckit.scaffold.route`**. Scaffolds a Next.js App Router route segment: `page.tsx` (RSC + `generateMetadata`), `layout.tsx`, `loading.tsx` (accessible skeleton), `error.tsx` (`"use client"` boundary), `not-found.tsx`. Supports `--auth`, `--no-layout`, `--title`, and other flags. |
-| `commands/speckit.scaffold.dal.md` | Command **`/speckit.scaffold.dal`**. Scaffolds a DAL module at `lib/dal/<entity>.ts` with `import 'server-only'`, typed `Result<T>` envelope, schema-validated inputs, CRUD method stubs, and a DTO mapper. Supports `--db` (prisma / drizzle / kysely / pg), `--methods`, `--schema`, and `--no-result-envelope`. |
-| `commands/speckit.docs.sync.md` | Command **`/speckit.docs.sync`**. Syncs `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `GEMINI.md` from the installed `agent-context.md` template. Shows a diff (with conflict detection for custom additions) before writing. Supports `--dry-run`, `--force`, and `--targets`. |
-| `scripts/bash/scan-repo.sh` · `scripts/powershell/scan-repo.ps1` | Repository scanners (inventory). Emit JSON per `scripts/SCHEMA.md` — `.md` inventory, parsed `package.json` and `tsconfig.json`, Next.js structure, `"use client"` / `"use server"` counts, DAL detection, CI workflows, env files, Node version pin, git metadata. |
+| File                                                                       | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `templates/constitution-template.md`                                       | The project **directive**. Replaces the core constitution template. Encodes principles, phased criticality, and the full behavior matrix across Frontend, Backend, Security, Performance, TypeScript & Code Quality, and Infrastructure & Operations.                                                                                                                                                                                                                                                                                                                                                         |
+| `templates/agent-context.md`                                               | The **global agent rules**. A compressed, always-on operating manual for AI coding agents working on the project. Mirror it into the agent's context file (`AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, etc.).                                                                                                                                                                                                                                                                                                                                                                                |
+| `commands/speckit.constitution.scan.md`                                    | Command **`/speckit.constitution.scan`**. Sibling to `/speckit.constitution`: scans the repository (Markdown docs, `package.json`, `tsconfig.json`, Next.js structure, tooling, CI) and exports `.specify/memory/constitution.md` with a Sync Impact Report mapping evidence to every Critical directive.                                                                                                                                                                                                                                                                                                     |
+| `commands/speckit.audit.md`                                                | Command **`/speckit.audit`**. Audits the codebase against the TypeScript and Next.js behavioral directives. Runs the audit script, persists the JSON to `.specify/audits/`, and produces a prioritized human-readable report grouped by severity and section.                                                                                                                                                                                                                                                                                                                                                 |
+| `commands/speckit.audit.deep.md`                                           | Command **`/speckit.audit.deep`**. Same scope as `/speckit.audit`, then layers `tsc --noEmit`, `eslint`, `npm audit`, file-level read-throughs, and cross-file LLM analysis. Inspects every `"use server"` file for the parse → authorize → ownership → DTO recipe. Persists to `.specify/audits/deep/`.                                                                                                                                                                                                                                                                                                      |
+| `commands/speckit.plan.md`                                                 | Command **`/speckit.plan`**. Next.js-specialized feature planning. Decomposes a feature into routes, RSC/client boundaries, Server Actions, Route Handlers, DAL methods, schema validators, caching strategy, prerendering strategy, metadata, accessibility checkpoints, error handling, security checklist, and a testing plan — all tagged with Phase and Criticality.                                                                                                                                                                                                                                     |
+| `commands/speckit.tasks.md`                                                | Command **`/speckit.tasks`**. Next.js-shaped task generation from a plan. Produces dependency-ordered tasks: schema first, then DAL, then Server Actions, then route scaffold, then RSC components, client islands, Route Handlers, metadata, skeletons, and tests. Each task has Next.js-idiomatic titles, acceptance criteria, and constitution directive references.                                                                                                                                                                                                                                       |
+| `commands/speckit.scaffold.route.md`                                       | Command **`/speckit.scaffold.route`**. Scaffolds a Next.js App Router route segment: `page.tsx` (RSC + `generateMetadata`), `layout.tsx`, `loading.tsx` (accessible skeleton), `error.tsx` (`"use client"` boundary), `not-found.tsx`. Supports `--auth`, `--no-layout`, `--title`, and other flags.                                                                                                                                                                                                                                                                                                          |
+| `commands/speckit.scaffold.dal.md`                                         | Command **`/speckit.scaffold.dal`**. Scaffolds a DAL module at `lib/dal/<entity>.ts` with `import 'server-only'`, typed `Result<T>` envelope, schema-validated inputs, CRUD method stubs, and a DTO mapper. Supports `--db` (prisma / drizzle / kysely / pg), `--methods`, `--schema`, and `--no-result-envelope`.                                                                                                                                                                                                                                                                                            |
+| `commands/speckit.docs.sync.md`                                            | Command **`/speckit.docs.sync`**. Syncs `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `GEMINI.md` from the installed `agent-context.md` template. Shows a diff (with conflict detection for custom additions) before writing. Supports `--dry-run`, `--force`, and `--targets`.                                                                                                                                                                                                                                                                                                            |
+| `scripts/bash/scan-repo.sh` · `scripts/powershell/scan-repo.ps1`           | Repository scanners (inventory). Emit JSON per `scripts/SCHEMA.md` — `.md` inventory, parsed `package.json` and `tsconfig.json`, Next.js structure, `"use client"` / `"use server"` counts, DAL detection, CI workflows, env files, Node version pin, git metadata.                                                                                                                                                                                                                                                                                                                                           |
 | `scripts/bash/audit-codebase.sh` · `scripts/powershell/audit-codebase.ps1` | Rule-based audit engine. 23 high-signal rules across TypeScript (compiler flags + type-system discipline), Frontend (RSC discipline, images, links, metadata), Backend (DAL `server-only`, env handling), Security (sessions, secrets, SQL, XSS), Performance, Infrastructure. Each finding carries `rule_id`, `severity`, `section`, `phase`, `scope`, `directive`, `remediation`, `file:line`, and a snippet. Designed for big codebases: single file enumeration, parallel grep via `xargs -P`, `--paths` / `--rules` / `--sections` filters, `--max-findings-per-rule` cap, `--list-rules` introspection. |
-| `scripts/SCHEMA.md` | Stable contract between scripts and commands (`schema_version: "1.0"`). |
+| `scripts/SCHEMA.md`                                                        | Stable contract between scripts and commands (`schema_version: "1.0"`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## Operating framework
 
@@ -94,26 +94,27 @@ You can pass freeform context with the command, e.g.:
 
 ### Setup
 
-| Command | What it does |
-|---|---|
-| `/speckit.constitution` | Interactive constitution draft (core spec-kit) |
+| Command                      | What it does                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------------------- |
+| `/speckit.constitution`      | Interactive constitution draft (core spec-kit)                                         |
 | `/speckit.constitution.scan` | Scan-driven: inventories the repo and exports a constitution with a Sync Impact Report |
-| `/speckit.docs.sync` | Sync agent context files from the installed `agent-context.md` template |
+| `/speckit.docs.sync`         | Sync agent context files from the installed `agent-context.md` template                |
 
 ### Development workflow
 
-| Command | What it does |
-|---|---|
-| `/speckit.plan <description>` | Decompose a feature into routes, actions, DAL methods, schemas, caching, metadata, and accessibility checkpoints |
-| `/speckit.tasks [plan-path]` | Generate dependency-ordered implementation tasks from a plan |
-| `/speckit.scaffold.route <path>` | Scaffold `page.tsx` + `layout.tsx` + `loading.tsx` + `error.tsx` + `not-found.tsx` for a route segment |
-| `/speckit.scaffold.dal <entity>` | Scaffold `lib/dal/<entity>.ts` with `server-only`, `Result<T>` envelope, and CRUD stubs |
+| Command                          | What it does                                                                                                                                                                                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.feature <name>`        | Full-stack feature scaffold. Walks through all 10 phases: Zod schemas → Drizzle table → DAL → Services → Server Actions → RSC page → Client form → Inngest worker → Tests. Supports `--auth`, `--skip-queue`, `--skip-tests`, `--fields`, `--dry-run`, and more. |
+| `/speckit.plan <description>`    | Decompose a feature into routes, actions, DAL methods, schemas, caching, metadata, and accessibility checkpoints                                                                                                                                                 |
+| `/speckit.tasks [plan-path]`     | Generate dependency-ordered implementation tasks from a plan                                                                                                                                                                                                     |
+| `/speckit.scaffold.route <path>` | Scaffold `page.tsx` + `layout.tsx` + `loading.tsx` + `error.tsx` + `not-found.tsx` for a route segment                                                                                                                                                           |
+| `/speckit.scaffold.dal <entity>` | Scaffold `lib/dal/<entity>.ts` with `server-only`, `Result<T>` envelope, and CRUD stubs                                                                                                                                                                          |
 
 ### Quality
 
-| Command | What it does |
-|---|---|
-| `/speckit.audit` | Regex-based audit against 23 rules — TypeScript, Frontend, Backend, Security, Performance, Infrastructure |
+| Command               | What it does                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `/speckit.audit`      | Regex-based audit against 23 rules — TypeScript, Frontend, Backend, Security, Performance, Infrastructure              |
 | `/speckit.audit.deep` | Full audit: regex + `tsc --noEmit` + `eslint` + `npm audit` + LLM file-level confirmation + Server Action recipe check |
 
 ### Typical workflow
@@ -122,7 +123,12 @@ You can pass freeform context with the command, e.g.:
 1. /speckit.constitution.scan        # generate the project constitution
 2. /speckit.docs.sync                # wire agent context files
 
-# for each feature:
+# for each feature — choose one path:
+
+## Quick path (scaffold entire feature at once):
+3. /speckit.feature <name>           # full-stack scaffold: schemas → DB → DAL → actions → UI → tests
+
+## Manual path (step-by-step control):
 3. /speckit.plan <feature>           # decompose the feature
 4. /speckit.tasks                    # generate implementation tasks
 5. /speckit.scaffold.route app/<path>  # scaffold route files
@@ -145,6 +151,7 @@ Either copy the contents directly or reference the file from your agent context:
 
 ```markdown
 <!-- in AGENTS.md / CLAUDE.md / .github/copilot-instructions.md -->
+
 The operating rules for this project live in
 `.specify/presets/nextjs/templates/agent-context.md`. Read them before
 proposing changes; the constitution at `.specify/memory/constitution.md`
