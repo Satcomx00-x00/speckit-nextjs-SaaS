@@ -20,6 +20,24 @@
       "version": "1.0.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/saas-feature/workflow.yml",
       "tags": ["saas", "multi-tenant", "full-cycle", "bun", "trpc", "drizzle", "temporal", "argocd"]
+    },
+    "hotfix": {
+      "id": "hotfix",
+      "name": "Hotfix Delivery",
+      "description": "Fast-path bug fix: scope → implement → regression test → quality gates → staging → prod with mandatory gate. Skips RFC and feature-flag ceremony.",
+      "author": "satcom",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/hotfix/workflow.yml",
+      "tags": ["hotfix", "bugfix", "fast-path", "bun", "trpc", "drizzle", "argocd"]
+    },
+    "migration-only": {
+      "id": "migration-only",
+      "name": "DB Migration Delivery",
+      "description": "Safe path for schema-only changes: scope → SQL review gate → apply local → quality gates → staging verify → prod-gate (DEPLOY confirm) → post-deploy verify. Supports additive, destructive, backfill, and index migration types.",
+      "author": "satcom",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/migration-only/workflow.yml",
+      "tags": ["migration", "database", "schema", "drizzle", "cnpg", "argocd"]
     }
   }
 }
