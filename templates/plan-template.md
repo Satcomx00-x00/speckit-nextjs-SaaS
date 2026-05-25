@@ -1,113 +1,247 @@
-# Implementation Plan: [FEATURE]
+# Implementation Plan: [FEATURE NAME]
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Feature slug**: `[feature-name]`
+**Feature flag**: `ff-[feature-name]` (default: OFF)
+**Branch**: `feat/[feature-name]`
+**Date**: [DATE]
+**Spec**: [link to spec.md]
+**RFC PR**: [link — must be merged before implementation PR is opened]
 
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Note**: This template is filled in by the `speckit.plan` command.
 
-**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command. See `.specify/templates/plan-template.md` for the execution workflow.
+---
 
 ## Summary
 
-[Extract from feature spec: primary requirement + technical approach from research]
+[Extract from feature spec: primary requirement + chosen technical approach in 2–3 sentences.]
 
-## Technical Context
+---
 
-<!--
-  ACTION REQUIRED: Replace the content in this section with the technical details
-  for the project. The structure here is presented in advisory capacity to guide
-  the iteration process.
--->
+## Stack Reference
 
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
+| Layer | Technology | Package / Path |
+|---|---|---|
+| Runtime | Bun + Turborepo | monorepo root |
+| API | Hono + tRPC v11 | `apps/api` |
+| Web | Next.js 15 (App Router) | `apps/web` |
+| DB schema | Drizzle ORM + Postgres | `packages/db` |
+| Zod contracts | Zod v3 | `packages/shared` |
+| Auth | BetterAuth | `apps/api/src/lib/auth` |
+| Cache | ioredis | `apps/api/src/lib/redis` |
+| Queue | BullMQ (fire-and-forget) | `apps/api/src/workers/` |
+| Durable async | Temporal | `packages/temporal-workflows` |
+| Observability | OpenTelemetry + Grafana + GlitchTip | platform-infra |
+| Deploy | ArgoCD + Kustomize | platform-infra |
+| Secrets | Infisical | env.ts + Infisical Operator |
 
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
+---
 
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
-
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-
-**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
-
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
-
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
-
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
-
-## Constitution Check
-
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
-
-[Gates determined based on constitution file]
-
-## Project Structure
-
-### Documentation (this feature)
+## File Map
 
 ```text
-specs/[###-feature]/
-├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
-├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
-├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
-├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
-├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
-└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
+packages/
+├── db/src/schema/[feature-name].ts          ← Drizzle table(s)
+├── shared/src/schemas/[feature-name].ts     ← Zod contracts + DTOs + error codes
+
+apps/api/src/
+├── routers/[feature-name].ts                ← tRPC procedures (orgScopedProcedure)
+├── dal/[feature-name].ts                    ← server-only reads/writes, ioredis cache
+├── services/[feature-name].ts               ← pure business logic, Result<T,E>
+├── workers/[feature-name].worker.ts         ← BullMQ worker (if background work)
+└── test/[feature-name]/
+    ├── dal.test.ts
+    ├── services.test.ts
+    └── procedures.test.ts
+
+packages/temporal-workflows/src/             ← (if Temporal workflow needed)
+├── workflows/[feature-name].ts
+└── activities/[feature-name].ts
+
+apps/web/
+├── app/(app)/[workspace]/[feature-name]/
+│   ├── page.tsx                             ← RSC, SDK createCaller, flag guard
+│   ├── loading.tsx                          ← Skeleton component
+│   └── error.tsx                           ← GlitchTip capture, Réessayer
+└── components/features/[feature-name]/
+    ├── Create[Feature]Form.tsx              ← react-hook-form + useMutation
+    ├── [Feature]List.tsx                    ← useQuery with initialData
+    ├── [Feature]ListSkeleton.tsx            ← aria-busy skeleton
+    └── index.ts                            ← barrel
+    tests/e2e/[feature-name]/
+    ├── happy.spec.ts
+    └── isolation.spec.ts                   ← @critical tenant isolation
 ```
 
-### Source Code (repository root)
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
+---
 
-```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
+## 1. Drizzle Schema
 
-tests/
-├── contract/
-├── integration/
-└── unit/
+**Package**: `packages/db/src/schema/[feature-name].ts`
 
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
+| Table | Key columns | Indexes | Relations |
+|---|---|---|---|
+| `[feature_snake]` | `id uuid pk default random()`, `organizationId uuid fk`, `…`, `createdAt`, `updatedAt` | `(organizationId, createdAt desc)` | `→ organizations` |
 
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
+**Migration notes**:
+- Forward-compatible: [yes — add-only / no — two-step required]
+- Rollback: flag OFF → behavior unchanged
+- `drizzle-kit generate` only — no handwritten SQL
 
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
+---
 
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
-```
+## 2. Zod Contracts
 
-**Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+**Package**: `packages/shared/src/schemas/[feature-name].ts`
 
-## Complexity Tracking
+| Schema | Kind | Used by |
+|---|---|---|
+| `Create[Feature]Input` | input | `[feature].create` |
+| `Update[Feature]Input` | input | `[feature].update` |
+| `Get[Feature]Input` | input | `[feature].get` |
+| `List[Feature]Input` | input | `[feature].list` |
+| `[Feature]Dto` | output | all queries |
+| `[Feature]ListDto` | output | list query |
+| `[Feature]ErrorCode` | const literal | procedures + services |
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
+---
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+## 3. tRPC Procedures
+
+**File**: `apps/api/src/routers/[feature-name].ts`
+
+| Procedure | Type | Input | Output | Min role | Flag guard |
+|---|---|---|---|---|---|
+| `[feature].get` | query | `Get[Feature]Input` | `[Feature]Dto` | viewer | yes |
+| `[feature].list` | query | `List[Feature]Input` | `[Feature]ListDto` | viewer | yes |
+| `[feature].create` | mutation | `Create[Feature]Input` | `[Feature]Dto` | member | yes |
+| `[feature].update` | mutation | `Update[Feature]Input` | `[Feature]Dto` | member | yes |
+| `[feature].delete` | mutation | `Get[Feature]Input` | void | admin | yes |
+
+All use `orgScopedProcedure`. `organizationId` from session — never from input.
+
+---
+
+## 4. DAL
+
+**File**: `apps/api/src/dal/[feature-name].ts`
+
+| Function | Cache key | Invalidated by |
+|---|---|---|
+| `get[Feature]ById` | `[feature]:org:{orgId}:{id}` TTL 5m | `update`, `delete` |
+| `list[Feature]s` | `[feature]s:org:{orgId}` TTL 5m | `create`, `update`, `delete` |
+| `create[Feature]Record` | — | invalidates list |
+| `update[Feature]Record` | — | invalidates one + list |
+| `delete[Feature]Record` | — | invalidates one + list |
+
+---
+
+## 5. Services
+
+**File**: `apps/api/src/services/[feature-name].ts`
+
+| Function | Returns | Purpose |
+|---|---|---|
+| `buildCreate[Feature]Payload` | `Result<DBPayload>` | validate + transform input |
+| `can[Feature]` | `boolean` | pure RBAC lookup |
+| `validate[Feature]State` | `Result<void>` | state machine guard |
+
+Zero infrastructure imports. `Result<T,E>` — no `throw` on business errors.
+
+---
+
+## 6. Feature Flag
+
+| Property | Value |
+|---|---|
+| Name | `ff-[feature-name]` |
+| Default | OFF |
+| Granularity | org |
+| Kill switch | < 5s |
+| Guard locations | Every tRPC procedure + RSC page.tsx |
+| Planned removal | [date] |
+
+---
+
+## 7. RBAC Matrix
+
+| Action | owner | admin | member | viewer |
+|---|---|---|---|---|
+| read | ✓ | ✓ | ✓ | ✓ |
+| create | ✓ | ✓ | ✓ | — |
+| update | ✓ | ✓ | ✓ | — |
+| delete | ✓ | ✓ | — | — |
+
+---
+
+## 8. Cache Strategy
+
+| Key | Data | TTL | Invalidated by |
+|---|---|---|---|
+| `[feature]:org:{orgId}:{id}` | Single DTO | 5m | update, delete |
+| `[feature]s:org:{orgId}` | List (first page) | 5m | create, update, delete |
+
+React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
+
+---
+
+## 9. Background Jobs
+
+| Effect | Tool | ID template | Trigger |
+|---|---|---|---|
+| [side effect description] | BullMQ / Temporal | `[feature]-{id}` | `[feature].create` mutation |
+
+---
+
+## 10. Observability Plan
+
+| Signal | Attribute | Tool |
+|---|---|---|
+| OTel span | `org.id`, `user.id`, `procedure.name` | Tempo |
+| Structured log | `organizationId`, `userId`, `correlationId`, `durationMs` | Loki |
+| Analytics event | `[feature].created`, `[feature].updated` | ClickHouse only |
+| Error capture | GlitchTip `captureException` | error.tsx + catch |
+| Alert | error_rate > 1% / p95 > threshold | Grafana Alerting |
+
+---
+
+## 11. Testing Plan
+
+| Type | File | Tool | Critical |
+|---|---|---|---|
+| Unit (services) | `apps/api/test/[feature]/services.test.ts` | bun:test | — |
+| Integration (DAL) | `apps/api/test/[feature]/dal.test.ts` | bun:test + Testcontainers | cross-org isolation |
+| Integration (procedures) | `apps/api/test/[feature]/procedures.test.ts` | bun:test + Testcontainers | RBAC, idempotency |
+| E2E happy path | `apps/web/tests/e2e/[feature]/happy.spec.ts` | Playwright | — |
+| E2E @critical | `apps/web/tests/e2e/[feature]/isolation.spec.ts` | Playwright | **blocks merge** |
+
+---
+
+## 12. Security Checklist
+
+- [ ] `organizationId` extracted from BetterAuth session — never from procedure input
+- [ ] Every DAL query includes `eq(table.organizationId, orgId)` in `where`
+- [ ] RBAC checked via `can[Feature](ctx.member.role, action)` in every mutation
+- [ ] ioredis rate limit on writes: `rl:[feature].[action]:{userId}`
+- [ ] No raw SQL — `drizzle-kit generate` only
+- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] Secrets via `env.ts` + Infisical
+- [ ] Sensitive fields absent from DTO schemas and cache values
+
+---
+
+## 13. Open Questions
+
+1. [Decision before implementation — e.g. "Soft-delete or hard-delete?"]
+2. [Decision before implementation]
+
+*(Delete if none.)*
+
+---
+
+## 14. Complexity Justification
+
+> Fill only if a hard constraint is intentionally violated.
+
+| Violation | Why needed | Simpler alternative rejected because |
+|---|---|---|
+| [e.g. raw SQL in migration] | [reason] | [why drizzle-kit generate was insufficient] |

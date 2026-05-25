@@ -1,252 +1,271 @@
 ---
-
-description: "Task list template for feature implementation"
+description: "Task list template for Delta-Global feature implementation"
 ---
 
 # Tasks: [FEATURE NAME]
 
-**Input**: Design documents from `/specs/[###-feature-name]/`
+**Feature slug**: `[feature-name]`
+**Feature flag**: `ff-[feature-name]` (must be OFF at merge)
+**Plan ref**: `[link to plan.md]`
+**Spec ref**: `[link to spec.md]`
+**Phase**: [P1 | P2 | P3 | P4]
 
-**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
+**Prerequisites**: plan.md (required), spec.md (required for acceptance criteria)
 
-**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
+**Note**: Tasks below are SAMPLE TASKS. The `speckit.tasks` command replaces them with
+actual tasks derived from the plan and spec. Do not keep sample tasks in the generated file.
 
-**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
+**Organization**: Tasks are grouped by layer in dependency order, not by user story.
+The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 
-## Format: `[ID] [P?] [Story] Description`
+---
 
-- **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
-- Include exact file paths in descriptions
+## Format: `[ID] [P?] Description`
 
-## Path Conventions
+- **[P]**: Can run in parallel with other [P]-marked tasks (different files, no dependencies)
+- Include exact file paths in every task description
+- Acceptance criteria are binary (yes/no) — no "should" or "ideally"
 
-- **Single project**: `src/`, `tests/` at repository root
-- **Web app**: `backend/src/`, `frontend/src/`
-- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
-- Paths shown below assume single project - adjust based on plan.md structure
+---
+
+## Path Conventions (Delta-Global monorepo)
+
+| Layer | Path |
+|---|---|
+| Zod contracts | `packages/shared/src/schemas/[feature-name].ts` |
+| Drizzle schema | `packages/db/src/schema/[feature-name].ts` |
+| Migration | `packages/db/drizzle/` (via `drizzle-kit generate`) |
+| DAL | `apps/api/src/dal/[feature-name].ts` |
+| Services | `apps/api/src/services/[feature-name].ts` |
+| tRPC router | `apps/api/src/routers/[feature-name].ts` |
+| BullMQ worker | `apps/api/src/workers/[feature-name].worker.ts` |
+| Temporal workflow | `packages/temporal-workflows/src/workflows/[feature-name].ts` |
+| RSC page | `apps/web/app/(app)/[workspace]/[feature-name]/page.tsx` |
+| Client components | `apps/web/components/features/[feature-name]/` |
+| DAL tests | `apps/api/test/[feature-name]/dal.test.ts` |
+| Services tests | `apps/api/test/[feature-name]/services.test.ts` |
+| Procedures tests | `apps/api/test/[feature-name]/procedures.test.ts` |
+| E2E | `apps/web/tests/e2e/[feature-name]/` |
+
+---
 
 <!--
   ============================================================================
-  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
-
-  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
-  - User stories from spec.md (with their priorities P1, P2, P3...)
-  - Feature requirements from plan.md
-  - Entities from data-model.md
-  - Endpoints from contracts/
-
-  Tasks MUST be organized by user story so each story can be:
-  - Implemented independently
-  - Tested independently
-  - Delivered as an MVP increment
-
+  IMPORTANT: The tasks below are SAMPLE TASKS for illustration only.
+  The speckit.tasks command MUST replace these with actual tasks derived from:
+  - The feature plan (plan.md)
+  - The feature spec (spec.md)
   DO NOT keep these sample tasks in the generated tasks.md file.
   ============================================================================
 -->
 
-## Phase 1: Setup (Shared Infrastructure)
+## Phase 1 — Foundation (unblocks everything)
 
-**Purpose**: Project initialization and basic structure
+### TASK-001 — [P] Declare feature flag `ff-[feature-name]`
+*File*: flag service config
+- [ ] Register `ff-[feature-name]` with `default: false`, org granularity, kill-switch < 5s
+- [ ] Flag evaluates to `false` on a clean environment
 
-- [ ] T001 Create project structure per implementation plan
-- [ ] T002 Initialize [language] project with [framework] dependencies
-- [ ] T003 [P] Configure linting and formatting tools
+### TASK-002 — [P] Implement Zod schemas in `packages/shared/src/schemas/[feature-name].ts`
+- [ ] Input schemas: `Create[Feature]Input`, `Update[Feature]Input`, `Get[Feature]Input`, `List[Feature]Input`
+- [ ] Output schemas: `[Feature]Dto`, `[Feature]ListDto`
+- [ ] `[Feature]ErrorCode` as `const` literal
+- [ ] No `z.any()`, `z.unknown()`, `z.record(z.any())`
+- [ ] `organizationId` absent from all input schemas
+- [ ] Export from barrel; `bun run typecheck` passes
 
----
+### TASK-003 — Implement Drizzle schema `packages/db/src/schema/[feature-name].ts`
+*Depends on*: TASK-002
+- [ ] `uuid().primaryKey().defaultRandom()` on `id`
+- [ ] `organizationId` FK → `organizations.id`
+- [ ] Timestamps with `withTimezone: true`
+- [ ] Index on `(organizationId, createdAt desc)`
+- [ ] `InferSelectModel` / `InferInsertModel` types exported
 
-## Phase 2: Foundational (Blocking Prerequisites)
+### TASK-004 — Generate and review migration
+*Depends on*: TASK-003
+- [ ] `bun --filter @delta-global/db drizzle-kit generate` produces clean SQL
+- [ ] Migration reviewed line-by-line (no NOT NULL without default, no DROP without plan)
+- [ ] `bun --filter @delta-global/db drizzle-kit migrate` applies cleanly locally
 
-**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
-
-**⚠️ CRITICAL**: No user story work can begin until this phase is complete
-
-Examples of foundational tasks (adjust based on your project):
-
-- [ ] T004 Setup database schema and migrations framework
-- [ ] T005 [P] Implement authentication/authorization framework
-- [ ] T006 [P] Setup API routing and middleware structure
-- [ ] T007 Create base models/entities that all stories depend on
-- [ ] T008 Configure error handling and logging infrastructure
-- [ ] T009 Setup environment configuration management
-
-**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
-
----
-
-## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
-
-**Goal**: [Brief description of what this story delivers]
-
-**Independent Test**: [How to verify this story works on its own]
-
-### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
-
-> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
-
-- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
-- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
-
-### Implementation for User Story 1
-
-- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
-- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
-- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
-- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
-- [ ] T016 [US1] Add validation and error handling
-- [ ] T017 [US1] Add logging for user story 1 operations
-
-**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
+### TASK-005 — [P] Add seed data in `scripts/seed.ts`
+*Depends on*: TASK-004
+- [ ] At least 2 organizations with non-overlapping data
+- [ ] Idempotent (safe to run multiple times)
+- [ ] Realistic data — no "test1", "foo"
 
 ---
 
-## Phase 4: User Story 2 - [Title] (Priority: P2)
+## Phase 2 — Backend
 
-**Goal**: [Brief description of what this story delivers]
+### TASK-006 — Implement DAL `apps/api/src/dal/[feature-name].ts`
+*Depends on*: TASK-003
+- [ ] `import 'server-only'` as first non-comment line
+- [ ] `get[Feature]ById`, `list[Feature]s`, `create[Feature]Record`, `update[Feature]Record`, `delete[Feature]Record`
+- [ ] Every read: `getSession()` → `assertMembership()` → `eq(table.organizationId, orgId)` in every `where`
+- [ ] `organizationId` required parameter on every write — never optional
+- [ ] ioredis cache: key `[feature]:org:{orgId}:{id}`, TTL 5m
+- [ ] Explicit column selection — no `SELECT *`
+- [ ] Sensitive fields excluded from DTO mapper return
 
-**Independent Test**: [How to verify this story works on its own]
+### TASK-007 — [P] DAL tests `apps/api/test/[feature-name]/dal.test.ts`
+*Depends on*: TASK-006
+- [ ] Testcontainers ephemeral Postgres — no shared test DB
+- [ ] Cross-org isolation: org A cannot read org B data
+- [ ] No session → `UNAUTHORIZED`
+- [ ] No membership → `FORBIDDEN`
+- [ ] Cursor pagination works (page 1, advance cursor, last page)
+- [ ] `bun test apps/api/test/[feature-name]/dal.test.ts` passes
 
-### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
+### TASK-008 — [P] Implement services `apps/api/src/services/[feature-name].ts`
+*Depends on*: TASK-002
+- [ ] Zero imports from `db`, `auth`, `redis`, `Hono`, `tRPC`, `Next`, `headers`, `cookies`
+- [ ] `buildCreate[Feature]Payload(input, { now })` → `Result<DBPayload>`
+- [ ] `can[Feature](role, action)` → `boolean` pure RBAC lookup
+- [ ] `Result<T,E>` — no `throw` on business errors
+- [ ] Nesting depth < 2
 
-- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
-- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
+### TASK-009 — [P] Services tests `apps/api/test/[feature-name]/services.test.ts`
+*Depends on*: TASK-008
+- [ ] 100% branch coverage
+- [ ] Every `[Feature]ErrorCode` value asserted in at least one test
+- [ ] Edge cases: empty string, max-length, 0, -1, Unicode, emoji
+- [ ] Total runtime < 100ms
+- [ ] No mocks
 
-### Implementation for User Story 2
+### TASK-010 — Implement tRPC router `apps/api/src/routers/[feature-name].ts`
+*Depends on*: TASK-006, TASK-008
+- [ ] `orgScopedProcedure` on every procedure
+- [ ] `.input()` + `.output()` schemas from `@delta-global/shared` — never inlined
+- [ ] `.meta({ name: '[feature].[action]' })` for OTel
+- [ ] Feature flag check (`flagService.isEnabled`) in every procedure
+- [ ] RBAC check (`can[Feature](ctx.member.role, action)`) in every mutation
+- [ ] Rate limit (`rl:[feature].[action]:{userId}`) via ioredis on writes
+- [ ] Wired into `appRouter`
 
-- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
-- [ ] T021 [US2] Implement [Service] in src/services/[service].py
-- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
-- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
+### TASK-011 — [P] Procedures tests `apps/api/test/[feature-name]/procedures.test.ts`
+*Depends on*: TASK-010
+- [ ] Testcontainers (Postgres + Redis)
+- [ ] No session → `UNAUTHORIZED`; no membership → `FORBIDDEN`; wrong role → `FORBIDDEN`
+- [ ] Invalid input → ZodError formatted to fields
+- [ ] Idempotency: 2× same create → no duplicate row
+- [ ] Rate limit: N+1 call → `TOO_MANY_REQUESTS`
+- [ ] Cache invalidation: correct Redis key absent after mutation
+- [ ] `bun test apps/api/test/[feature-name]/procedures.test.ts` passes
 
-**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
-
----
-
-## Phase 5: User Story 3 - [Title] (Priority: P3)
-
-**Goal**: [Brief description of what this story delivers]
-
-**Independent Test**: [How to verify this story works on its own]
-
-### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
-
-- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
-- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
-
-### Implementation for User Story 3
-
-- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
-- [ ] T027 [US3] Implement [Service] in src/services/[service].py
-- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
-
-**Checkpoint**: All user stories should now be independently functional
-
----
-
-[Add more user story phases as needed, following the same pattern]
-
----
-
-## Phase N: Polish & Cross-Cutting Concerns
-
-**Purpose**: Improvements that affect multiple user stories
-
-- [ ] TXXX [P] Documentation updates in docs/
-- [ ] TXXX Code cleanup and refactoring
-- [ ] TXXX Performance optimization across all stories
-- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
-- [ ] TXXX Security hardening
-- [ ] TXXX Run quickstart.md validation
-
----
-
-## Dependencies & Execution Order
-
-### Phase Dependencies
-
-- **Setup (Phase 1)**: No dependencies - can start immediately
-- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
-- **User Stories (Phase 3+)**: All depend on Foundational phase completion
-  - User stories can then proceed in parallel (if staffed)
-  - Or sequentially in priority order (P1 → P2 → P3)
-- **Polish (Final Phase)**: Depends on all desired user stories being complete
-
-### User Story Dependencies
-
-- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
-- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
-- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
-
-### Within Each User Story
-
-- Tests (if included) MUST be written and FAIL before implementation
-- Models before services
-- Services before endpoints
-- Core implementation before integration
-- Story complete before moving to next priority
-
-### Parallel Opportunities
-
-- All Setup tasks marked [P] can run in parallel
-- All Foundational tasks marked [P] can run in parallel (within Phase 2)
-- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
-- All tests for a user story marked [P] can run in parallel
-- Models within a story marked [P] can run in parallel
-- Different user stories can be worked on in parallel by different team members
+### TASK-012 — BullMQ worker OR Temporal workflow (if background work)
+*Depends on*: TASK-010
+- [ ] Idempotent job/workflow processing
+- [ ] Failure captured to GlitchTip
+- [ ] Worker/workflow tests pass
 
 ---
 
-## Parallel Example: User Story 1
+## Phase 3 — Frontend
 
-```bash
-# Launch all tests for User Story 1 together (if tests requested):
-Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
-Task: "Integration test for [user journey] in tests/integration/test_[name].py"
+### TASK-013 — Scaffold RSC page and route segments
+*Depends on*: TASK-010
+- [ ] `apps/web/app/(app)/[workspace]/[feature-name]/page.tsx` — async RSC, `generateMetadata`, flag guard, `createCaller`
+- [ ] `loading.tsx` — skeleton, no `'use client'`
+- [ ] `error.tsx` — `'use client'`, GlitchTip capture, "Réessayer" button
+- [ ] `await params` before any use (Next.js 15)
+- [ ] No `fetch('/api/...')` — only `createCaller`
+- [ ] `bun run typecheck` passes
 
-# Launch all models for User Story 1 together:
-Task: "Create [Entity1] model in src/models/[entity1].py"
-Task: "Create [Entity2] model in src/models/[entity2].py"
+### TASK-014 — Implement client components
+*Depends on*: TASK-013
+- [ ] `Create[Feature]Form` — `react-hook-form` + `zodResolver` + `useMutation` + Sonner toast
+- [ ] `[Feature]List` — `useQuery` with `initialData`, empty state with CTA
+- [ ] `[Feature]ListSkeleton` — `aria-busy`, skeleton matches layout dimensions
+- [ ] `queryClient.invalidateQueries` on mutation success
+- [ ] Submit disabled while `mutation.isPending`
+- [ ] Field-level server errors via `setError`
+- [ ] All strings via `next-intl`
+- [ ] 44×44px touch targets on mobile
+- [ ] `bun run typecheck` passes
+
+### TASK-015 — [P] UI component tests
+*Depends on*: TASK-014
+- [ ] `Create[Feature]Form` renders; submit disabled on pending
+- [ ] `[Feature]List` shows empty state when `items` is empty
+- [ ] `[Feature]List` renders items when data is present
+
+---
+
+## Phase 4 — E2E + Quality Gates
+
+### TASK-016 — [P] E2E happy path `apps/web/tests/e2e/[feature-name]/happy.spec.ts`
+*Depends on*: TASK-013, TASK-014
+- [ ] Pre-authenticated storage state — no re-login per test
+- [ ] Login → navigate → create → assert item visible
+- [ ] Validation error path: submit invalid form → field error visible
+- [ ] No `waitForTimeout` — selector-based waits only
+- [ ] `bun run test:e2e --grep [feature-name]` passes
+
+### TASK-017 — ⚠️ @critical E2E tenant isolation `apps/web/tests/e2e/[feature-name]/isolation.spec.ts`
+*Depends on*: TASK-013
+**MUST PASS BEFORE PR IS OPENED**
+- [ ] User A on page of org A → data visible
+- [ ] User A on URL of org B → 404
+- [ ] User A calls procedure with org B `organizationId` → 403
+- [ ] User A on URL with resource ID from org B → 404
+- [ ] Tests tagged `@critical`
+- [ ] `bun run test:e2e --grep @critical --grep [feature-name]` exits 0
+
+### TASK-018 — Quality gates (all must exit 0)
+*Depends on*: all above
+- [ ] `bun run lint` (Biome) — no `z.any`, no `analytics-db` imports
+- [ ] `bun run typecheck`
+- [ ] `bun run knip`
+- [ ] `turbo run build --filter=...[HEAD^1]`
+- [ ] `gitleaks detect --no-banner`
+- [ ] `bun pm audit --severity high`
+
+---
+
+## Phase Gate Summary
+
+| ID | Title | Phase | Criticality | Status |
+|---|---|---|---|---|
+| TASK-001 | Feature flag declaration | P1 | Critical | ☐ |
+| TASK-002 | Zod schemas | P1 | Critical | ☐ |
+| TASK-003 | Drizzle schema | P1 | Critical | ☐ |
+| TASK-004 | Migration | P1 | Critical | ☐ |
+| TASK-006 | DAL | P1 | Critical | ☐ |
+| TASK-008 | Services | P1 | High | ☐ |
+| TASK-010 | tRPC procedures | P1 | Critical | ☐ |
+| TASK-013 | RSC page + route | P1 | High | ☐ |
+| TASK-014 | Client components | P1 | High | ☐ |
+| TASK-017 | @critical isolation | P1 | **Critical — blocks merge** | ☐ |
+| TASK-018 | Quality gates | P1 | Critical | ☐ |
+| TASK-007 | DAL tests | P2 | High | ☐ |
+| TASK-009 | Services tests | P2 | High | ☐ |
+| TASK-011 | Procedures tests | P2 | High | ☐ |
+| TASK-016 | E2E happy path | P2 | High | ☐ |
+
+---
+
+## Parallel Execution Opportunities
+
+Tasks marked [P] can run simultaneously (they touch different files):
+
 ```
+Group A (can all run in parallel after TASK-002/003):
+  TASK-007 (DAL tests)
+  TASK-008 (Services)
+  TASK-011 (Procedures tests) — after TASK-010
+  TASK-015 (UI tests) — after TASK-014
+  TASK-016 (E2E happy path) — after TASK-013/014
 
----
-
-## Implementation Strategy
-
-### MVP First (User Story 1 Only)
-
-1. Complete Phase 1: Setup
-2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
-3. Complete Phase 3: User Story 1
-4. **STOP and VALIDATE**: Test User Story 1 independently
-5. Deploy/demo if ready
-
-### Incremental Delivery
-
-1. Complete Setup + Foundational → Foundation ready
-2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
-3. Add User Story 2 → Test independently → Deploy/Demo
-4. Add User Story 3 → Test independently → Deploy/Demo
-5. Each story adds value without breaking previous stories
-
-### Parallel Team Strategy
-
-With multiple developers:
-
-1. Team completes Setup + Foundational together
-2. Once Foundational is done:
-   - Developer A: User Story 1
-   - Developer B: User Story 2
-   - Developer C: User Story 3
-3. Stories complete and integrate independently
+Group B (strictly sequential):
+  TASK-002 → TASK-003 → TASK-004 → TASK-006 → TASK-010 → TASK-013 → TASK-017
+```
 
 ---
 
 ## Notes
 
-- [P] tasks = different files, no dependencies
-- [Story] label maps task to specific user story for traceability
-- Each user story should be independently completable and testable
-- Verify tests fail before implementing
-- Commit after each task or logical group
-- Stop at any checkpoint to validate story independently
-- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+- `[P]` = different files, no dependencies — safe to parallelize
+- Each task is independently committable
+- TASK-017 (`@critical`) gates the PR — no exceptions
+- Do not open the PR until TASK-018 (all quality gates) passes

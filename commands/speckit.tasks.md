@@ -1,9 +1,12 @@
 ---
-description: Next.js-specialized task generation. Converts a feature plan into an ordered, constitution-compliant task list with Next.js-shaped task titles, acceptance criteria referencing behavioral directives, and explicit phase tags.
+description: Delta-Global task generation. Converts a feature plan into a dependency-ordered, constitution-compliant task list with Delta-Global-shaped titles, acceptance criteria referencing stack constraints, and explicit phase tags. Covers Zod contracts → Drizzle schema → DAL → services → tRPC procedures → RSC page → client components → BullMQ/Temporal → bun:test + Playwright.
 handoffs:
-  - label: Open Plan
+  - label: Open plan
     agent: speckit.plan
-    prompt: Produce a Next.js plan for this feature so tasks can be generated from it.
+    prompt: Produce a Delta-Global feature plan so tasks can be generated from it.
+  - label: Analyze consistency
+    agent: speckit.analyze
+    prompt: Cross-check the generated tasks against the RFC for drift or missing coverage.
 ---
 
 ## User Input
@@ -12,47 +15,62 @@ handoffs:
 $ARGUMENTS
 ```
 
-If a plan document path is supplied (e.g. `.specify/plans/feature-name.md`), read it and derive tasks from it.
-If the argument is a freeform feature description, derive tasks directly from the description.
-If the argument is empty, look for the most recent plan at `.specify/plans/` and generate tasks from it.
+- If a plan path is supplied (e.g. `.specify/plans/<feature-name>.md`), read it and derive tasks from it.
+- If the argument is a freeform feature description, derive tasks directly from the description.
+- If empty, look for the most recent plan under `.specify/plans/` and generate tasks from it.
+
+---
 
 ## Pre-Execution Checks
 
-Check for `.specify/extensions.yml`. Look for hooks under `hooks.before_tasks`. Apply standard hook-processing (skip `enabled: false`, skip non-empty `condition`, surface optional, auto-execute mandatory).
+Check for `.specify/extensions.yml`. Look for hooks under `hooks.before_tasks`. Apply standard hook-processing.
+
+---
 
 ## Outline
 
 ### 1. Parse the plan
 
-Extract:
-- Route prefix (e.g. `app/dashboard`)
-- List of segments (page, layout, loading, error, not-found, route handlers)
-- List of Server Actions + their recipe columns (Parse / Authorize / Ownership / DTO)
-- List of DAL methods
-- List of schemas
-- Caching directives
-- Phase target
+Extract from the plan document (or derive from the description):
+
+- Feature slug (kebab-case)
+- Feature flag name: `ff-<feature-slug>`
+- Drizzle tables + columns
+- Zod schemas (input + output)
+- tRPC procedures (name, type, input/output, min role)
+- DAL functions
+- Service functions
+- Background jobs (BullMQ queue name or Temporal workflow name)
+- RSC page path
+- Client components
+- E2E test paths
+- Phase target (P1–P4)
 - Auth requirement
-- Testing plan
+- Migration needed (yes/no)
 
 ### 2. Produce the task list
 
-Generate tasks using the template below. Follow these ordering rules:
+Generate tasks using the template below. Follow this **dependency order** — tasks must appear in this sequence:
 
-**Dependency order** (tasks must be listed in this order unless a dependency makes an exception necessary):
+1. Feature flag declaration
+2. Zod contracts (`packages/shared`)
+3. Drizzle schema + migration (if needed)
+4. Seed data (if migration)
+5. DAL module (`apps/api/src/dal/`)
+6. DAL tests
+7. Services module (`apps/api/src/services/`)
+8. Services tests
+9. tRPC procedures (`apps/api/src/routers/`)
+10. Procedures tests
+11. BullMQ worker or Temporal workflow (if background work)
+12. RSC page + route segments (`apps/web/app/`)
+13. Client components (`apps/web/components/features/`)
+14. UI component tests
+15. E2E happy path tests
+16. E2E `@critical` tenant-isolation tests
+17. Quality gates check
 
-1. Schema validators (schemas are imported by both DAL and Actions)
-2. DAL methods (depend on schemas; are imported by Actions)
-3. Server Actions (depend on schemas + DAL)
-4. Route structure scaffold (RSC pages, layouts, loading, error, not-found)
-5. RSC data-fetching components (depend on DAL)
-6. Client islands (depend on RSC boundary decisions)
-7. Route Handlers (independent of above, but after DAL)
-8. Metadata (`generateMetadata`)
-9. Suspense / Skeleton components
-10. Tests (unit → integration → E2E)
-
-Within each group, order by dependency (e.g. `getEntityById` before `createEntity`).
+Within each group, order by dependency (e.g. `get` before `create`).
 
 ---
 
@@ -60,280 +78,402 @@ Within each group, order by dependency (e.g. `getEntityById` before `createEntit
 # Tasks: <Feature Name>
 
 **Plan ref**: <path or "inline">
+**Feature flag**: `ff-<feature-slug>` (must be OFF at merge)
 **Phase**: <P1 | P2 | P3 | P4>
 **Total tasks**: <N>
-**Constitution ref**: `.specify/memory/constitution.md`
 
 ---
 
-## Foundation (unblock everything)
+## Foundation — Feature Flag
 
-### TASK-001 — Add `<EntityName>` zod schema
-*File*: `lib/schemas/<entity>.ts`
+### TASK-001 — Declare feature flag `ff-<feature-slug>`
+*File*: flag service config
 *Phase/Crit*: P1 / Critical · Scope: Both
 
 **What**:
-- Create `<EntityName>Schema` with `z.object({ ... })`
-- Export `type <EntityName>Input = z.infer<typeof <EntityName>Schema>`
-- Add `<EntityName>ParamsSchema` for dynamic route params if applicable
+- Register `ff-<feature-slug>` with `default: false`
+- Granularity: org-level
+- Kill switch < 5s (flag service hot-reload)
+- Add planned removal date
 
 **Acceptance criteria**:
-- [ ] Schema compiles under `tsc --noEmit` with no errors
-- [ ] `parse()` throws `ZodError` on invalid input (test in unit suite)
-- [ ] No field typed as `any` or `unknown` without explicit narrowing
-
-**Constitution directives**: `BE.ENV.schema-validated-boundaries` (Critical) · `TS.TYPE.any-usage` (Critical)
+- [ ] Flag evaluates to `false` for all orgs before explicit enablement
+- [ ] `flagService.isEnabled('ff-<feature-slug>', orgId)` returns `false` on a clean env
+- [ ] Flag entry committed to the flag service config
 
 ---
 
-### TASK-002 — Scaffold DAL module `lib/dal/<entity>.ts`
-*File*: `lib/dal/<entity>.ts`
+## Foundation — Zod Contracts
+
+### TASK-002 — Implement Zod schemas in `packages/shared`
+*File*: `packages/shared/src/schemas/<feature-slug>.ts`
+*Phase/Crit*: P1 / Critical · Scope: Both
+
+**What**:
+- `<Feature>ErrorCode` as `const` literal object
+- One input schema per procedure: `Create<Feature>Input`, `Update<Feature>Input`, `Get<Feature>Input`, `List<Feature>Input`
+- Output DTO schemas: `<Feature>Dto`, `<Feature>ListDto`
+- Precise constraints: `.min`, `.max`, `.uuid()`, `.email()`, `.regex()` on every field
+- No `z.any()`, `z.unknown()`, `z.record(z.any())` — Biome will fail
+- `organizationId` absent from all input schemas
+- Export types and schemas from the package barrel
+
+**Acceptance criteria**:
+- [ ] `bun run typecheck` passes with no errors
+- [ ] No `z.any` / `z.unknown` / `z.record(z.any)` in the file
+- [ ] Every input schema has at least one constraint per field
+- [ ] DTO schemas omit sensitive fields (tokens, hashes, secrets)
+
+---
+
+## Foundation — Database (if migration needed)
+
+### TASK-003 — Implement Drizzle schema and generate migration
+*Files*: `packages/db/src/schema/<feature-slug>.ts`, migration file
 *Phase/Crit*: P1 / Critical · Scope: BE
 
 **What**:
-- `import 'server-only'` as first line
-- `get<Entity>ById(id: BrandedId): Promise<Result<EntityDTO>>`
-- `create<Entity>(input: CreateEntityInput): Promise<Result<EntityDTO>>`
-- *(add other methods from plan §3c)*
-- Return `{ ok: true; data }` / `{ ok: false; error }` — never throw to callers
+- `uuid().primaryKey().defaultRandom()` on `id`
+- `organizationId` FK → `organizations.id`, `onDelete` decision documented
+- `createdAt` / `updatedAt` with `timestamp({ withTimezone: true }).notNull().defaultNow()`
+- Index on `(organizationId, createdAt desc)` minimum
+- Additional composite indexes for frequent filter+sort patterns
+- `relations()` declared if joins are needed
+- Export `InferSelectModel` and `InferInsertModel` types
+- Add to `packages/db/src/schema/index.ts` barrel
+- Run `bun --filter @delta-global/db drizzle-kit generate`
 
 **Acceptance criteria**:
-- [ ] `server-only` import present — verified by audit rule `BE.DAL.missing-server-only`
-- [ ] Return type is `Promise<Result<EntityDTO>>`, not `Promise<any>`
-- [ ] No raw SQL string interpolation (parameterized queries only)
-- [ ] Unit tested with a mock DB fixture
+- [ ] Every tenant-scoped table has `organizationId` column + index
+- [ ] Generated SQL contains no `NOT NULL` on existing table without a default
+- [ ] `drizzle-kit generate` produces clean output (no warnings)
+- [ ] Migration reviewed line-by-line before applying
 
-**Constitution directives**: `BE.DAL.missing-server-only` (Critical) · `SEC.SQL.injection` (Critical) · `TS.TYPE.any-usage` (Critical)
-
----
-
-## Server Actions
-
-### TASK-003 — Implement `<actionName>` Server Action
-*File*: `app/<path>/actions.ts`
-*Phase/Crit*: P2 / Critical · Scope: BE
+### TASK-004 — Add seed data for tenant-isolation tests
+*File*: `scripts/seed.ts`
+*Phase/Crit*: P1 / High · Scope: BE
 
 **What**:
-- `'use server'` directive at file top
-- **Parse**: `<EntityName>Schema.parse(formData / input)` at function top
-- **Authorize**: `const session = await getServerSession(); if (!session) redirect('/login')`
-- **Ownership**: `if (resource.userId !== session.user.id) throw new Error('Forbidden')`
-- **DTO**: return `{ <field>, <field> }` — only the fields the client needs
-- Call the DAL method, handle `Result.ok === false`
+- Create at least 2 organizations with realistic data each
+- Idempotent (safe to run multiple times)
+- Include Unicode and max-length edge cases
+- No placeholder strings like "test1", "foo"
 
 **Acceptance criteria**:
-- [ ] Parse fires before any DB call
-- [ ] Auth check is inside the action (not just at layout/middleware)
-- [ ] Ownership check present when action mutates a user-owned resource
-- [ ] Return value is a typed DTO — no raw DB row exposed to the client
-- [ ] Integration-tested with an authenticated + unauthenticated fixture
-
-**Constitution directives**: `BE.ACTION.recipe-violation` (Critical) · `SEC.SESSION.auth-at-action` (Critical)
+- [ ] `bun run db:seed` executes without error
+- [ ] Re-running seed produces no duplicate key errors
+- [ ] At least 2 orgs with non-overlapping data exist after seeding
 
 ---
 
-## Route Structure
+## DAL
 
-### TASK-004 — Scaffold route segment `app/<path>/`
-*Files*: `page.tsx` · `layout.tsx` · `loading.tsx` · `error.tsx` · `not-found.tsx`
+### TASK-005 — Implement DAL `apps/api/src/dal/<feature-slug>.ts`
+*File*: `apps/api/src/dal/<feature-slug>.ts`
+*Phase/Crit*: P1 / Critical · Scope: BE
+
+**What**:
+- `import 'server-only'` as the first non-comment line
+- `get<Feature>ById` — reads by id, org-scoped, Redis-cached + React `cache()`
+- `list<Feature>s` — cursor-based pagination, org-scoped, Redis-cached (first page)
+- `create<Feature>Record(data, organizationId)` — inserts + invalidates cache
+- `update<Feature>Record(id, orgId, data)` — updates + invalidates cache
+- `delete<Feature>Record(id, orgId)` — deletes + invalidates cache
+- Every read: `getSession()` → `assertMembership()` → DB query with `eq(table.organizationId, orgId)`
+- Cache key pattern: `<feature>:org:{orgId}:{id}` and `<feature>s:org:{orgId}`
+- Explicit column selection — no `SELECT *`
+- Sensitive fields excluded from returned rows
+- `Result<T,E>` return type on every function
+
+**Acceptance criteria**:
+- [ ] `import 'server-only'` is the first non-comment line
+- [ ] Every query includes `eq(<featureSnake>.organizationId, orgId)` in `where`
+- [ ] `organizationId` is a required non-optional parameter on all write functions
+- [ ] Cache TTL set, invalidation calls present in all mutation functions
+- [ ] `bun run typecheck` passes
+
+### TASK-006 — DAL tests (bun:test + Testcontainers)
+*File*: `apps/api/test/<feature-slug>/dal.test.ts`
+*Phase/Crit*: P2 / High · Scope: BE
+
+**What**:
+- Ephemeral Postgres via Testcontainers — no shared test DB
+- Happy path: `get`, `list`, `create`, `update`, `delete`
+- **Cross-org isolation**: user of org A querying org B data → `null` / error
+- No session → `UNAUTHORIZED`
+- No membership → `FORBIDDEN`
+- Suspended org → correct behavior per business rule
+- Pagination: page 1, cursor advance, last page (empty `nextCursor`)
+- Cache hit: 2 identical calls → 1 DB query (Redis intercepts second)
+
+**Acceptance criteria**:
+- [ ] Cross-org isolation test passes — org A cannot read org B data
+- [ ] No session test throws or returns `UNAUTHORIZED`
+- [ ] All tests pass with `bun test apps/api/test/<feature-slug>/dal.test.ts`
+- [ ] No real Postgres connection used (Testcontainer only)
+
+---
+
+## Services
+
+### TASK-007 — Implement pure services `apps/api/src/services/<feature-slug>.ts`
+*File*: `apps/api/src/services/<feature-slug>.ts`
+*Phase/Crit*: P1 / High · Scope: BE
+
+**What**:
+- Zero imports from `db`, `auth`, `redis`, `Hono`, `tRPC`, `Next`, `headers`, `cookies`
+- `buildCreate<Feature>Payload(input, { now })` → `Result<DBPayload>`
+- `can<Feature>(role, action)` → `boolean` (pure RBAC lookup table)
+- Additional domain-specific validators / state machine checks
+- `Result<T,E>` return type — no `throw` on business errors
+- `now` and `rng` injected as parameters — no `Date.now()` / `Math.random()` directly
+- Guard clauses at top, happy path at bottom
+- Nesting depth < 2
+
+**Acceptance criteria**:
+- [ ] No imports from infrastructure packages
+- [ ] Every function returns `Result<T,E>` — no raw `throw`
+- [ ] `bun run typecheck` passes
+
+### TASK-008 — Services tests
+*File*: `apps/api/test/<feature-slug>/services.test.ts`
+*Phase/Crit*: P2 / High · Scope: BE
+
+**What**:
+- 100% branch coverage
+- Every `<Feature>ErrorCode` value is asserted in at least one test
+- Edge cases: empty string, max-length string, 0, -1, Unicode, emoji
+- No mocks needed (pure functions)
+- Total runtime < 100ms
+
+**Acceptance criteria**:
+- [ ] All branches covered
+- [ ] All error codes tested
+- [ ] `bun test apps/api/test/<feature-slug>/services.test.ts` < 100ms
+- [ ] No mocks or external dependencies
+
+---
+
+## tRPC Procedures
+
+### TASK-009 — Implement tRPC router `apps/api/src/routers/<feature-slug>.ts`
+*File*: `apps/api/src/routers/<feature-slug>.ts`
+*Phase/Crit*: P1 / Critical · Scope: BE
+
+**What**:
+- Wire `<featureCamel>Router` into `appRouter` in `apps/api/src/routers/index.ts`
+- `orgScopedProcedure` on every procedure — `organizationId` from session, NEVER from input
+- `.input(schema)` imported from `@delta-global/shared` — never inlined
+- `.output(schema)` for typed SDK contracts
+- `.meta({ name: '<feature>.<action>' })` for OTel spans + structured logs
+- Feature flag check: `flagService.isEnabled('ff-<feature-slug>', ctx.organizationId)` → `FORBIDDEN`
+- Role check: `can<Feature>(ctx.member.role, action)` → `FORBIDDEN`
+- Rate limit: `rl:<procedure>:{userId}` via ioredis before writes
+- `db.transaction()` for multi-table mutations
+- Cache invalidation via `invalidate<Feature>Cache` in DAL
+- `TRPCError` with generic client message; full stack to GlitchTip + Loki
+
+**Acceptance criteria**:
+- [ ] `orgScopedProcedure` used on every procedure
+- [ ] Feature flag guard present in every procedure
+- [ ] RBAC check present in every mutation
+- [ ] Rate limit present on `create`, `update`, `delete`
+- [ ] `bun run typecheck` passes
+
+### TASK-010 — Procedures integration tests
+*File*: `apps/api/test/<feature-slug>/procedures.test.ts`
+*Phase/Crit*: P2 / High · Scope: BE
+
+**What**:
+- Testcontainers (Postgres + Redis + Temporal if needed)
+- Happy path per procedure
+- No session → `UNAUTHORIZED`
+- No membership → `FORBIDDEN`
+- Insufficient role → `FORBIDDEN`
+- Invalid input → ZodError formatted to field errors
+- Idempotency: 2× same `create` call → no duplicate row
+- Quota exceeded → typed `<Feature>ErrorCode` error
+- Cache invalidation: correct Redis key deleted after mutation
+- Rate limit: N+1 call → `TOO_MANY_REQUESTS`
+
+**Acceptance criteria**:
+- [ ] All role permutations tested
+- [ ] Idempotency test passes
+- [ ] Cache invalidation verified (assert key absent after mutation)
+- [ ] `bun test apps/api/test/<feature-slug>/procedures.test.ts` passes
+
+---
+
+## Background Work (if applicable)
+
+### TASK-011 — Implement BullMQ worker (or Temporal workflow)
+*File*: `apps/api/src/workers/<feature-slug>.worker.ts` OR `packages/temporal-workflows/src/`
+*Phase/Crit*: P2 / High · Scope: BE
+
+**What** (BullMQ):
+- `<featureCamel>Queue` exported for use in procedures
+- Worker handles `<feature>-created`, `<feature>-updated` job names
+- Idempotent job processing
+- `removeOnComplete` and `removeOnFail` configured
+- Error captured to GlitchTip on `worker.on('failed')`
+
+**What** (Temporal — use `/speckit.scaffold.temporal <feature-slug>` instead):
+- Workflow ID: `<feature>-{resourceId}` — idempotent
+- Activities isolate all external effects
+- Retry policy + timeouts defined
+- `TestWorkflowEnvironment` tests with time skipping
+
+**Acceptance criteria**:
+- [ ] Worker/workflow is idempotent
+- [ ] Failure captured and alerted
+- [ ] `bun test` passes for worker/workflow
+
+---
+
+## UI
+
+### TASK-012 — Scaffold RSC page and route segments
+*Files*: `apps/web/app/(app)/[workspace]/<feature-slug>/`
 *Phase/Crit*: P1 / High · Scope: FE
 
 **What**:
-- `page.tsx` — async RSC; fetches data via DAL (no `"use client"`)
-- `layout.tsx` — RSC; wraps children; no data fetching unless shared data (e.g. nav user)
-- `loading.tsx` — instant skeleton shown during page-level Suspense
-- `error.tsx` — `"use client"` boundary; receives `error` + `reset` props
-- `not-found.tsx` — RSC; shown when `notFound()` is thrown
+- `page.tsx` — async RSC, `generateMetadata`, feature-flag guard, SDK `createCaller`
+- `loading.tsx` — skeleton matching final layout
+- `error.tsx` — GlitchTip capture + "Réessayer" button
+- Feature flag redirects to `/${workspace}` if OFF
 
 **Acceptance criteria**:
-- [ ] `page.tsx` has no `"use client"` directive
-- [ ] `error.tsx` is the only file with `"use client"` in this segment (unless client islands are needed)
-- [ ] `loading.tsx` renders a skeleton — not an empty `<div>`
-- [ ] `generateMetadata` exported from `page.tsx` (or a separate `metadata.ts`)
+- [ ] No `'use client'` in `page.tsx`
+- [ ] `await params` before any use of params (Next.js 15)
+- [ ] Feature flag guard present
+- [ ] `createCaller` used — no `fetch('/api/...')`
+- [ ] `bun run typecheck` passes
 
-**Constitution directives**: `FE.RSC.use-client-at-page-or-layout` (High) · `FE.META.missing-generate-metadata` (Medium)
-
----
-
-## RSC Data Components
-
-### TASK-005 — Implement `<EntityList>` RSC component
-*File*: `app/<path>/_components/<EntityList>.tsx`
-*Phase/Crit*: P1 / Medium · Scope: FE
-
-**What**:
-- `async` function — fetches data via DAL, NOT via `fetch('/api/...')`
-- Wrapped in `<Suspense fallback={<EntityListSkeleton />}>` at the call site in `page.tsx`
-- Uses `Promise.all([...])` if multiple independent fetches are needed
-
-**Acceptance criteria**:
-- [ ] No `useEffect`, `useState`, or browser API calls
-- [ ] Parallel fetches for independent data (not sequential `await`)
-- [ ] Skeleton shown while data loads (Suspense in page.tsx)
-
-**Constitution directives**: `FE.RSC.client-fetch` (High) · `PERF.FETCH.parallel-fetches` (Medium)
-
----
-
-## Client Islands
-
-### TASK-006 — Implement `<InteractiveWidget>` client component
-*File*: `app/<path>/_components/<InteractiveWidget>.tsx`
+### TASK-013 — Implement client components
+*Files*: `apps/web/components/features/<feature-slug>/`
 *Phase/Crit*: P1 / High · Scope: FE
 
 **What**:
-- `'use client'` at the top
-- Receives pre-fetched data as props from the RSC parent
-- Calls Server Actions via `useTransition` / `useFormState` — no `fetch('/api/...')`
-- Manages only UI state (open/closed, form values) — no auth state, no session
+- `Create<Feature>Form` — `react-hook-form` + `zodResolver` + `useMutation` + Sonner toast
+- `<Feature>List` — `useQuery` with `initialData` hydration from RSC
+- `<Feature>ListSkeleton` — skeleton matching layout, `aria-busy`
+- Server errors mapped to fields via `setError`
+- Submit disabled while `mutation.isPending`
+- `queryClient.invalidateQueries` on mutation success (aligned with server cache keys)
+- All strings via `next-intl` — no hardcoded FR/EN
+- 44×44px touch targets, `aria-invalid`, `aria-describedby` on errors
 
 **Acceptance criteria**:
-- [ ] Props typed as `Readonly<{ ... }>` — no `any`
-- [ ] No direct DB or DAL imports
-- [ ] No auth context — identity passed as a prop if needed for display
-- [ ] Accessible: interactive elements are native HTML or fully ARIA-labelled
+- [ ] No double-submit possible (button disabled while pending)
+- [ ] Field-level errors from server displayed
+- [ ] Empty state renders illustration + CTA
+- [ ] Skeleton dimensions approximate final layout
+- [ ] `bun run typecheck` passes
 
-**Constitution directives**: `FE.RSC.use-client-at-page-or-layout` (High) · `TS.TYPE.any-usage` (Critical) · `FE.A11Y.*` (Critical)
-
----
-
-## Route Handlers (if applicable)
-
-### TASK-007 — Implement `POST app/api/<path>/route.ts`
-*File*: `app/api/<path>/route.ts`
-*Phase/Crit*: P2 / Critical · Scope: BE
-
-**What**:
-- Verify `Authorization` header (Bearer) or session cookie
-- Parse body with schema before any processing
-- Rate-limit via `<rate-limiter>` (project-configured)
-- HMAC signature check for webhook endpoints (`X-<Provider>-Signature`)
-- Return typed `NextResponse.json(dto, { status })` — no raw DB row
-
-**Acceptance criteria**:
-- [ ] Returns `401` for unauthenticated requests
-- [ ] Returns `400` for schema-invalid bodies
-- [ ] Rate limiting wired
-- [ ] No secrets in response body or headers
-
-**Constitution directives**: `SEC.SESSION.auth-at-action` (Critical) · `BE.ENV.schema-validated-boundaries` (Critical) · `SEC.RATE.missing` (High)
-
----
-
-## Metadata
-
-### TASK-008 — Add `generateMetadata` to `app/<path>/page.tsx`
-*File*: `app/<path>/page.tsx`
+### TASK-014 — UI component tests
+*File*: `apps/web/components/features/<feature-slug>/`
 *Phase/Crit*: P2 / Medium · Scope: FE
 
 **What**:
-- Export `generateMetadata({ params, searchParams }: Props): Promise<Metadata>`
-- Fetch minimal fields (title, description image) — use `{ cache: 'force-cache' }` if data is stable
-- Return `title`, `description`, `openGraph`, `twitter` at minimum
-
-**Acceptance criteria**:
-- [ ] No `<title>` hard-coded in JSX — only `generateMetadata`
-- [ ] OG image included for public pages
-- [ ] Dynamic pages fetch their own metadata — not a copy-paste of the layout's metadata
-
-**Constitution directives**: `FE.META.missing-generate-metadata` (Medium)
+- Render `Create<Feature>Form` — verify submit button disabled on pending
+- Render `<Feature>List` with empty data — verify empty state shown
+- Render `<Feature>List` with data — verify items rendered
 
 ---
 
-## Suspense Skeletons
+## E2E Tests
 
-### TASK-009 — Build `<EntityListSkeleton>` component
-*File*: `app/<path>/_components/<EntityList>.skeleton.tsx`
-*Phase/Crit*: P1 / Medium · Scope: FE
+### TASK-015 — E2E happy path
+*File*: `apps/web/tests/e2e/<feature-slug>/happy.spec.ts`
+*Phase/Crit*: P2 / High · Scope: FE
 
 **What**:
-- RSC (no `"use client"`)
-- Renders placeholder UI matching the shape of `<EntityList>` (same layout, no real data)
-- Used as `fallback` in `<Suspense>` in `page.tsx`
+- Pre-authenticated storage state per role (owner, admin, member, viewer) — no re-login
+- Login → navigate → create → assert item visible
+- Validation error path — submit invalid form → assert field error visible
+- No `waitForTimeout` — use selectors
 
 **Acceptance criteria**:
-- [ ] Skeleton renders without any async calls
-- [ ] Dimensions approximately match the loaded component (prevents layout shift)
-- [ ] `aria-busy="true"` on the container (accessibility)
+- [ ] Happy path test passes
+- [ ] Form validation error test passes
+- [ ] `bun run test:e2e --grep <feature-slug>` exits 0
 
-**Constitution directives**: `FE.PERF.streaming-suspense` (Medium)
+### TASK-016 — E2E @critical tenant isolation
+*File*: `apps/web/tests/e2e/<feature-slug>/isolation.spec.ts`
+*Phase/Crit*: P1 / Critical · Scope: Both
+
+**What** (all four assertions are required — this test MUST pass to merge):
+1. User A on page of org A → data visible
+2. User A on URL of org B → 404
+3. User A calls procedure with `orgId` of org B → 403
+4. User A on URL with resource ID from org B → 404
+
+**Acceptance criteria**:
+- [ ] All 4 assertions pass
+- [ ] Tests are tagged `@critical`
+- [ ] `bun run test:e2e --grep @critical --grep <feature-slug>` exits 0
+- [ ] **This test MUST pass before the PR is opened**
 
 ---
 
-## Tests
+## Quality Gates
 
-### TASK-010 — Unit tests for `<EntityName>` schema
-*File*: `__tests__/schemas/<entity>.test.ts`
-*Phase/Crit*: P2 / High · Scope: Both
+### TASK-017 — Run quality gates
+*Phase/Crit*: P1 / Critical · Scope: Both
 
-**What**:
-- Valid input → `parse()` returns typed object
-- Missing required field → `ZodError` thrown with field path
-- Type coercion edge cases (empty string, null, undefined)
+**What** (all must exit 0 before opening PR):
+- `bun run lint` (Biome)
+- `bun run typecheck` (tsc --noEmit)
+- `bun run knip` (dead exports)
+- `turbo run build --filter=...[HEAD^1]`
+- `gitleaks detect --no-banner`
+- `bun pm audit --severity high`
 
-### TASK-011 — Unit tests for DAL methods
-*File*: `__tests__/dal/<entity>.test.ts`
-*Phase/Crit*: P2 / High · Scope: BE
-
-**What**:
-- Mock the DB client
-- `get<Entity>ById` with existing / missing ID
-- `create<Entity>` with valid / schema-invalid input
-- Verify `Result` envelope shape in all paths
-
-### TASK-012 — Integration tests for Server Actions
-*File*: `__tests__/actions/<entity>.test.ts`
-*Phase/Crit*: P2 / High · Scope: BE
-
-**What**:
-- Authenticated fixture: action succeeds, returns DTO
-- Unauthenticated fixture: action redirects or returns `{ error: 'Unauthorized' }`
-- Schema-invalid input: action returns `{ error: '...' }` without reaching DB
-- Ownership violation: action returns `{ error: 'Forbidden' }`
-
-### TASK-013 — E2E test: happy path + auth gate
-*File*: `e2e/<feature>.spec.ts`
-*Phase/Crit*: P3 / Medium · Scope: FE
-
-**What**:
-- Unauthenticated user is redirected to login
-- Authenticated user sees data and can perform the primary action
-- Form validation errors are visible and announced (screen-reader check via `axe-core`)
+**Acceptance criteria**:
+- [ ] All 6 quality gates exit 0
+- [ ] No `z.any` / `z.unknown` / `z.record(z.any)` in Zod schemas (Biome)
+- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] No raw SQL template literals outside migration files
 
 ---
 
 ## Phase Gate Summary
 
-Tasks required to complete **Phase <P1/P2/P3/P4>** for this feature:
+Tasks required before opening the PR:
 
 | ID | Title | Phase | Criticality | Status |
 |---|---|---|---|---|
-| TASK-001 | Add schema | P1 | Critical | ☐ |
-| TASK-002 | Scaffold DAL | P1 | Critical | ☐ |
-| TASK-003 | Server Action | P2 | Critical | ☐ |
-| TASK-004 | Route scaffold | P1 | High | ☐ |
-| TASK-005 | RSC component | P1 | Medium | ☐ |
-| TASK-006 | Client island | P1 | High | ☐ |
-| TASK-007 | Route Handler | P2 | Critical | ☐ |
-| TASK-008 | Metadata | P2 | Medium | ☐ |
-| TASK-009 | Skeleton | P1 | Medium | ☐ |
-| TASK-010 | Schema tests | P2 | High | ☐ |
-| TASK-011 | DAL tests | P2 | High | ☐ |
-| TASK-012 | Action tests | P2 | High | ☐ |
-| TASK-013 | E2E tests | P3 | Medium | ☐ |
+| TASK-001 | Feature flag declaration | P1 | Critical | ☐ |
+| TASK-002 | Zod contracts | P1 | Critical | ☐ |
+| TASK-003 | Drizzle schema + migration | P1 | Critical | ☐ |
+| TASK-005 | DAL implementation | P1 | Critical | ☐ |
+| TASK-007 | Services | P1 | High | ☐ |
+| TASK-009 | tRPC procedures | P1 | Critical | ☐ |
+| TASK-012 | RSC page + route | P1 | High | ☐ |
+| TASK-013 | Client components | P1 | High | ☐ |
+| TASK-016 | @critical isolation tests | P1 | Critical | ☐ |
+| TASK-017 | Quality gates | P1 | Critical | ☐ |
+| TASK-006 | DAL tests | P2 | High | ☐ |
+| TASK-008 | Services tests | P2 | High | ☐ |
+| TASK-010 | Procedures tests | P2 | High | ☐ |
+| TASK-015 | E2E happy path | P2 | High | ☐ |
 
 *Adjust task IDs and rows to match the actual tasks generated above.*
+
 ```
 
 ---
 
 ## Formatting Rules
 
-- Task IDs are sequential (`TASK-001`, `TASK-002`, …) within a session.
-- Every task has: *File*, *Phase/Crit/Scope*, **What** (bullet list), **Acceptance criteria** (checklist), **Constitution directives** (rule IDs).
-- Do not invent constitution directives — use only rule IDs from the audit script's `--list-rules` output or the constitution's behavior table.
-- Omit task groups (Route Handlers, Client Islands, etc.) that are not relevant to this feature.
-- The Phase Gate Summary table is always present; it is the first thing a release reviewer checks.
+- Task IDs are sequential (`TASK-001`, `TASK-002`, …).
+- Every task has: *File*, *Phase/Crit/Scope*, **What** (bullets), **Acceptance criteria** (checklist).
+- Do not invent paths — use the Delta-Global monorepo layout: `apps/api/`, `apps/web/`, `packages/db/`, `packages/shared/`, `packages/temporal-workflows/`.
+- Omit task groups not relevant to the feature (e.g. skip Temporal tasks if `--skip-temporal`).
+- The Phase Gate Summary table is always present.
+- Flag TASK-016 (`@critical` isolation) as **blocking merge** in the summary.
+
+---
 
 ## Post-Execution Hooks
 

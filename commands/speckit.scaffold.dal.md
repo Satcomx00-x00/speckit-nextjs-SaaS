@@ -1,5 +1,15 @@
 ---
-description: Scaffold a Next.js Data Access Layer (DAL) module. Generates lib/dal/<entity>.ts with import 'server-only', typed Result envelope, schema-parsed inputs, and method stubs for the most common CRUD pattern — all compliant with the project constitution.
+description: Scaffold a Delta-Global DAL module. Generates apps/api/src/dal/<feature>.ts with import "server-only", BetterAuth session check, organizationId tenant-scoping on every query, ioredis caching, Result<T,E> envelope, and Drizzle stubs — all compliant with the stack conventions.
+handoffs:
+  - label: Scaffold the tRPC router
+    agent: speckit.scaffold.route
+    prompt: Scaffold the tRPC router and RSC page that consumes this DAL.
+  - label: Generate feature tasks
+    agent: speckit.tasks
+    prompt: Generate implementation tasks for the feature that uses this DAL.
+  - label: Analyze consistency
+    agent: speckit.analyze
+    prompt: Cross-check the DAL against the RFC for organizationId scoping, cache invalidation, and hard constraint compliance.
 ---
 
 ## User Input
@@ -12,239 +22,320 @@ Parse from `$ARGUMENTS`:
 
 | Token | Meaning | Default |
 |---|---|---|
-| First positional arg | Entity name (PascalCase or kebab-case accepted) | required |
+| First positional arg | Feature/entity name (kebab-case or PascalCase accepted) | required |
 | `--methods <list>` | Comma-separated method verbs | `get,list,create,update,delete` |
-| `--schema <path>` | Path to existing zod/valibot schema file to import | auto-detected or inline stub |
-| `--id-type <type>` | Branded ID type to use | `string` (with a TODO to brand it) |
-| `--no-result-envelope` | Return raw type instead of `Result<T>` | omit flag to get the envelope |
-| `--db <client>` | DB client hint (`prisma`, `drizzle`, `kysely`, `pg`, `mysql2`, `generic`) | `generic` |
+| `--schema <path>` | Path to existing Zod schema file to import | auto-detected in `packages/shared/src/schemas/` |
+| `--id-type <type>` | Primary key type (`uuid` or `cuid2`) | `uuid` |
+| `--no-result-envelope` | Return raw type instead of `Result<T,E>` | use envelope |
+| `--soft-delete` | Generate soft-delete pattern instead of hard delete | hard delete |
+| `--no-cache` | Skip Redis cache stubs | generate cache |
 
-If entity name is missing, ask for it before proceeding.
+If the feature name is missing, ask for it before proceeding.
+
+---
 
 ## Pre-Execution Checks
 
-Check for `.specify/extensions.yml`. Look for hooks under `hooks.before_scaffold`. Apply standard hook-processing.
+Check for `.specify/extensions.yml`. If present, look for hooks under `hooks.before_scaffold`. Apply standard hook-processing.
+
+Verify `apps/api/src/dal/` exists. If not, warn and ask whether to create the directory or abort.
+
+---
 
 ## Scaffold Steps
 
 ### 1. Normalize entity name
 
 Convert the input to:
-- `EntityName` — PascalCase (used in types, function names)
-- `entityName` — camelCase (used in variable names)
-- `entity-name` — kebab-case (used in file name)
 
-Examples: `user-post` → `UserPost` / `userPost` / `user-post`
+| Form | Example |
+|---|---|
+| `FeatureName` — PascalCase | `PostPublishing` |
+| `featureName` — camelCase | `postPublishing` |
+| `feature-name` — kebab-case | `post-publishing` |
+| `feature_snake` — snake_case | `post_publishing` |
 
 ### 2. Resolve output path
 
-Check whether `src/lib/dal/` or `lib/dal/` exists in the repo (prefer `src/` if present). Create the directory if it does not exist.
+Output file: `apps/api/src/dal/<feature-name>.ts`
 
-Output file: `<dal-root>/<entity-name>.ts`
+If the file already exists, warn and ask whether to overwrite, skip, or abort.
 
-If the file already exists, warn the user and ask whether to overwrite, skip, or abort.
-
-### 3. Resolve the schema import
+### 3. Resolve Zod schema import
 
 If `--schema <path>` was provided, import from that path.
-Otherwise, look for `lib/schemas/<entity-name>.ts` (or `src/lib/schemas/<entity-name>.ts`).
-If neither exists, inline a stub schema inside the DAL file with a `// TODO` directing the user to extract it.
+Otherwise, look for `packages/shared/src/schemas/<feature-name>.ts`.
+If neither exists, add a `// TODO` stub and continue.
 
 ### 4. Write the DAL module
 
-Use this template (adapt to `--db` hint and `--methods` list):
-
 ```ts
-// <dal-root>/<entity-name>.ts
+// apps/api/src/dal/<feature-name>.ts
 import 'server-only'
+import { cache } from 'react'
+import { eq, and, desc, lt } from 'drizzle-orm'
+import { db } from '@delta-global/db'
+import { <featureSnake> } from '@delta-global/db/schema'
+import { redis } from '@/lib/redis'
+import { getSession, assertMembership } from '@/lib/auth'
+import type { List<Feature>Input } from '@delta-global/shared'
 
-// Replace with your project's DB client import
-// import { db } from '@/lib/db'
+// ─── Cache keys ────────────────────────────────────────────────────────────────
+// Pattern enforced by stack: <feature>:org:{orgId}:{id}
+// Invalidate on every mutation via prefix DEL.
 
-import { <EntityName>Schema, type <EntityName>Input } from '@/lib/schemas/<entity-name>'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-/** Branded ID — replace `string` with your branded type (e.g. `Brand<string, '<EntityName>Id'>`) */
-type <EntityName>Id = string  // TODO: brand this type
-
-export interface <EntityName>DTO {
-  id: <EntityName>Id
-  // TODO: add DTO fields — expose only what the client needs
-  createdAt: Date
-  updatedAt: Date
+const cacheKey = {
+  one:  (orgId: string, id: string) => `<feature>:org:${orgId}:${id}`,
+  list: (orgId: string)             => `<feature>s:org:${orgId}`,
 }
 
-export interface Result<T> {
-  ok: true
-  data: T
-} | {
-  ok: false
-  error: string
-}
+const CACHE_TTL_SECONDS = 300 // 5 minutes
 
-// ─── Methods ──────────────────────────────────────────────────────────────────
+// ─── Reads ─────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a single <EntityName> by ID.
- * Returns { ok: false } when not found so callers handle absence without exceptions.
+ * Fetch a single <Feature> by ID, scoped to the authenticated user's organization.
+ * Wrapped with React cache() for intra-request dedup.
+ * Redis-cached for ${CACHE_TTL_SECONDS}s.
  */
-export async function get<EntityName>ById(
-  id: <EntityName>Id,
-): Promise<Result<<EntityName>DTO>> {
-  try {
-    // TODO: replace with your ORM/query
-    // const row = await db.<entity>.findUnique({ where: { id } })
-    // if (!row) return { ok: false, error: 'Not found' }
-    // return { ok: true, data: to<EntityName>DTO(row) }
-    throw new Error('get<EntityName>ById: not implemented')
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }
+export const get<Feature>ById = cache(async (id: string): Promise<Result<<Feature>DTO | null>> => {
+  const session = await getSession()
+  if (!session) return { ok: false, error: 'UNAUTHORIZED' }
+
+  const orgId = session.activeOrganizationId
+  const membership = await assertMembership(session.user.id, orgId)
+  if (!membership) return { ok: false, error: 'FORBIDDEN' }
+
+  const cached = await redis.get(cacheKey.one(orgId, id))
+  if (cached) return { ok: true, data: JSON.parse(cached) as <Feature>DTO }
+
+  const row = await db.query.<featureSnake>.findFirst({
+    where: and(
+      eq(<featureSnake>.id, id),
+      eq(<featureSnake>.organizationId, orgId), // ← tenant scope: always required
+    ),
+    columns: {
+      // Explicit column selection — never SELECT *
+      // Exclude sensitive fields: tokens, hashes, secrets
+      id: true,
+      organizationId: true,
+      createdAt: true,
+      updatedAt: true,
+      // TODO: add business columns
+    },
+  })
+
+  if (!row) return { ok: true, data: null }
+
+  const dto = to<Feature>DTO(row)
+  await redis.setex(cacheKey.one(orgId, id), CACHE_TTL_SECONDS, JSON.stringify(dto))
+  return { ok: true, data: dto }
+})
+
+/**
+ * List <Feature>s for the current organization with cursor-based pagination.
+ */
+export const list<Feature>s = cache(async (input: List<Feature>Input): Promise<Result<<Feature>ListDTO>> => {
+  const session = await getSession()
+  if (!session) return { ok: false, error: 'UNAUTHORIZED' }
+
+  const orgId = session.activeOrganizationId
+  const membership = await assertMembership(session.user.id, orgId)
+  if (!membership) return { ok: false, error: 'FORBIDDEN' }
+
+  // Use list cache only on the first page (no cursor)
+  if (!input.cursor) {
+    const cached = await redis.get(cacheKey.list(orgId))
+    if (cached) return { ok: true, data: JSON.parse(cached) as <Feature>ListDTO }
   }
+
+  // Whitelisted sort columns — never interpolate user-supplied column names
+  const sortColumn = <featureSnake>.createdAt // TODO: map input.sortBy to actual column
+
+  const rows = await db.query.<featureSnake>.findMany({
+    where: and(
+      eq(<featureSnake>.organizationId, orgId), // ← tenant scope: always required
+      input.cursor ? lt(<featureSnake>.createdAt, new Date(input.cursor)) : undefined,
+    ),
+    orderBy: desc(sortColumn),
+    limit: input.limit + 1, // +1 to detect if there is a next page
+    columns: {
+      id: true,
+      organizationId: true,
+      createdAt: true,
+      updatedAt: true,
+      // TODO: add business columns
+    },
+  })
+
+  const hasMore = rows.length > input.limit
+  const items = (hasMore ? rows.slice(0, -1) : rows).map(to<Feature>DTO)
+  const result: <Feature>ListDTO = {
+    items,
+    nextCursor: hasMore ? items.at(-1)?.createdAt ?? null : null,
+    total: items.length,
+  }
+
+  if (!input.cursor) {
+    await redis.setex(cacheKey.list(orgId), CACHE_TTL_SECONDS, JSON.stringify(result))
+  }
+
+  return { ok: true, data: result }
+})
+
+// ─── Writes ────────────────────────────────────────────────────────────────────
+
+/**
+ * Insert a new <Feature>, scoped to the given organizationId.
+ * organizationId is always passed explicitly — never from user input.
+ */
+export async function create<Feature>Record(
+  data: Omit<New<Feature>, 'id' | 'createdAt' | 'updatedAt'>,
+  organizationId: string,
+): Promise<Result<<Feature>DTO>> {
+  const [row] = await db
+    .insert(<featureSnake>)
+    .values({ ...data, organizationId })
+    .returning()
+  if (!row) return { ok: false, error: '<FEATURE>_INSERT_FAILED' }
+  await invalidate<Feature>Cache(organizationId)
+  return { ok: true, data: to<Feature>DTO(row) }
 }
 
 /**
- * List all <EntityName>s accessible to the given actor.
- * Pass ownership filters here — never return rows the actor doesn't own.
+ * Update fields on an existing <Feature>.
+ * Ownership enforced in the WHERE clause — not separately checked.
  */
-export async function list<EntityName>s(
-  actorId: string,
-): Promise<Result<<EntityName>DTO[]>> {
-  try {
-    // TODO: replace with your ORM/query
-    // const rows = await db.<entity>.findMany({ where: { userId: actorId } })
-    // return { ok: true, data: rows.map(to<EntityName>DTO) }
-    throw new Error('list<EntityName>s: not implemented')
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
+export async function update<Feature>Record(
+  id: string,
+  organizationId: string,
+  data: Partial<Omit<New<Feature>, 'id' | 'organizationId' | 'createdAt' | 'updatedAt'>>,
+): Promise<Result<<Feature>DTO>> {
+  const [row] = await db
+    .update(<featureSnake>)
+    .set({ ...data, updatedAt: new Date() })
+    .where(
+      and(
+        eq(<featureSnake>.id, id),
+        eq(<featureSnake>.organizationId, organizationId), // ← ownership in query
+      ),
+    )
+    .returning()
+  if (!row) return { ok: false, error: '<FEATURE>_NOT_FOUND' }
+  await invalidate<Feature>Cache(organizationId, id)
+  return { ok: true, data: to<Feature>DTO(row) }
 }
 
 /**
- * Create a new <EntityName>.
- * Input is pre-validated by the schema — do not re-parse here.
+ * Delete a <Feature>. Ownership enforced in WHERE clause.
+ * Use soft-delete pattern if the domain requires an audit trail.
  */
-export async function create<EntityName>(
-  input: <EntityName>Input,
-  actorId: string,
-): Promise<Result<<EntityName>DTO>> {
-  // Schema parse — guard against callers that skip validation
-  const parsed = <EntityName>Schema.safeParse(input)
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.message }
-  }
-
-  try {
-    // TODO: replace with your ORM/query
-    // const row = await db.<entity>.create({ data: { ...parsed.data, userId: actorId } })
-    // return { ok: true, data: to<EntityName>DTO(row) }
-    throw new Error('create<EntityName>: not implemented')
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
-}
-
-/**
- * Update an existing <EntityName>.
- * Ownership must be verified by the caller (Server Action) before calling this.
- */
-export async function update<EntityName>(
-  id: <EntityName>Id,
-  input: Partial<<EntityName>Input>,
-): Promise<Result<<EntityName>DTO>> {
-  try {
-    // TODO: replace with your ORM/query
-    // const row = await db.<entity>.update({ where: { id }, data: input })
-    // return { ok: true, data: to<EntityName>DTO(row) }
-    throw new Error('update<EntityName>: not implemented')
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }
-  }
-}
-
-/**
- * Delete an <EntityName>.
- * Ownership must be verified by the caller (Server Action) before calling this.
- */
-export async function delete<EntityName>(
-  id: <EntityName>Id,
+export async function delete<Feature>Record(
+  id: string,
+  organizationId: string,
 ): Promise<Result<void>> {
-  try {
-    // TODO: replace with your ORM/query
-    // await db.<entity>.delete({ where: { id } })
-    // return { ok: true, data: undefined }
-    throw new Error('delete<EntityName>: not implemented')
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unknown error' }
+  await db
+    .delete(<featureSnake>)
+    .where(
+      and(
+        eq(<featureSnake>.id, id),
+        eq(<featureSnake>.organizationId, organizationId), // ← ownership in query
+      ),
+    )
+  await invalidate<Feature>Cache(organizationId, id)
+  return { ok: true, data: undefined }
+}
+
+// ─── Cache invalidation ────────────────────────────────────────────────────────
+
+async function invalidate<Feature>Cache(orgId: string, id?: string): Promise<void> {
+  const pattern = `<feature>*:org:${orgId}*`
+  const keys = await redis.keys(pattern)
+  if (keys.length > 0) await redis.del(...keys)
+}
+
+// ─── Mapper ────────────────────────────────────────────────────────────────────
+
+/** Convert a DB row to the public DTO. Never expose raw DB rows to callers. */
+function to<Feature>DTO(row: <Feature>): <Feature>DTO {
+  return {
+    id:             row.id,
+    organizationId: row.organizationId,
+    createdAt:      row.createdAt.toISOString(),
+    updatedAt:      row.updatedAt.toISOString(),
+    // TODO: map business columns
   }
 }
 
-// ─── Mapper ───────────────────────────────────────────────────────────────────
+// ─── Result type ──────────────────────────────────────────────────────────────
 
-/** Convert a DB row to the public DTO shape. Never expose raw DB rows to callers. */
-function to<EntityName>DTO(row: unknown): <EntityName>DTO {
-  // TODO: implement mapping
-  throw new Error('to<EntityName>DTO: not implemented')
-}
+type Result<T, E extends string = string> =
+  | { ok: true;  data: T }
+  | { ok: false; error: E }
 ```
-
-#### `--db` adaptations
-
-Replace the inline `db.*` comments with the matching pattern for the detected ORM:
-
-| `--db` value | Query stub pattern |
-|---|---|
-| `prisma` | `await prisma.<entity>.findUnique({ where: { id } })` |
-| `drizzle` | `await db.select().from(<entity>Table).where(eq(<entity>Table.id, id)).limit(1)` |
-| `kysely` | `await db.selectFrom('<entity>').where('id', '=', id).selectAll().executeTakeFirst()` |
-| `pg` | `await pool.query('SELECT * FROM <entity> WHERE id = $1', [id])` |
-| `generic` | Comment-only stub (as above) |
 
 #### `--methods` filtering
 
-Only generate the method stubs listed in `--methods`. If `--methods get,list` is passed, omit `create`, `update`, `delete` stubs.
+Only generate method stubs listed in `--methods`. If `--methods get,list` is passed, omit `create`, `update`, `delete` stubs.
 
 #### `--no-result-envelope`
 
-If this flag is set, replace `Promise<Result<T>>` with `Promise<T | null>` (for get) and `Promise<T>` (for create/update). Remove the `Result` interface. The mapper still applies.
+Replace `Promise<Result<T>>` with `Promise<T | null>` (for get) and `Promise<T>` (for writes). Remove the `Result` type. Cache and mapper still apply.
+
+#### `--soft-delete`
+
+Replace `delete<Feature>Record` with a soft-delete that sets `deletedAt = new Date()` instead of issuing `db.delete(...)`. Add `isNull(<featureSnake>.deletedAt)` to every `where` clause in reads.
+
+#### `--no-cache`
+
+Remove all Redis imports, `cacheKey`, `CACHE_TTL_SECONDS`, and `invalidate<Feature>Cache`. Remove the cache lookup/set blocks from reads. Writes still call the DB directly.
 
 ### 5. Print the scaffold summary
 
 ```
 ## DAL scaffold complete
 
-**Entity**: `<EntityName>`
-**File**: `<dal-root>/<entity-name>.ts`
+**Entity**: `<FeatureName>`
+**File**: `apps/api/src/dal/<feature-name>.ts`
 
 **Includes**:
-- `import 'server-only'` ← audit rule BE.DAL.missing-server-only satisfied
-- `Result<T>` typed envelope ← no raw DB rows exposed to callers
-- Schema-validated input on `create<EntityName>` ← BE.ENV.schema-validated-boundaries satisfied
-- Method stubs: <method list>
+- `import 'server-only'`          ← DAL_MISSING_SERVER_ONLY satisfied
+- BetterAuth session + membership ← UNAUTHORIZED / FORBIDDEN enforced
+- `organizationId` on every query ← MISSING_ORG_SCOPE satisfied
+- `Result<T, E>` envelope         ← typed errors, no raw throws to callers
+- ioredis cache: key pattern `<feature>:org:{orgId}:{id}`, TTL 5m
+- React `cache()` for intra-request dedup
+- Explicit column selection        ← no SELECT *
+- Sensitive fields excluded from DTO
+
+**Methods generated**: <method list>
 
 **TODOs** (search `// TODO` in the generated file):
-- [ ] Replace DB query stubs with your ORM/client calls
-- [ ] Implement `to<EntityName>DTO` mapper — expose only the fields the client needs
-- [ ] Brand `<EntityName>Id` — replace `string` with a branded type
-- [ ] Add DTO fields that match your DB schema
+- [ ] Add business columns to column selection and DTO mapper
+- [ ] Map `input.sortBy` to actual Drizzle column in list function
+- [ ] Implement `to<Feature>DTO` mapper fully
 
 **Next steps**:
-- Run `/speckit.scaffold.route app/<path>` to scaffold the page that uses this DAL
-- Run `/speckit.plan <feature>` to generate a full feature plan including this DAL
-- Add unit tests at `__tests__/dal/<entity-name>.test.ts`
-
-**Audit check**: run `/speckit.audit --rules BE.DAL.missing-server-only` to verify the
-`server-only` import is detected correctly.
+- Run `/speckit.scaffold.route <feature-name>` to scaffold the tRPC router and page
+- Run `/speckit.analyze` to verify organizationId scoping and cache tag coverage
+- Run `bun run typecheck` to confirm the file compiles
 ```
 
-### 6. Constitution compliance check
+### 6. Compliance check
 
 Before writing the file, verify:
 
-1. `import 'server-only'` is the **first non-comment line** after any `// `comments at the very top of the file (constitution: `BE.DAL.missing-server-only` / Critical).
-2. No return type is `Promise<any>` or untyped — every method has an explicit return type annotation.
-3. No raw SQL string interpolation in the stubs (parameterized only — constitution: `SEC.SQL.injection` / Critical).
-4. The `to<EntityName>DTO` mapper is present (constitution: `BE.ACTION.dto-missing` — DAL callers should receive DTOs, not raw rows).
+1. `import 'server-only'` is the **first non-comment line**.
+2. `organizationId` is a required (non-optional) parameter on every write function.
+3. Every `db.query.*` or `db.select()` call includes `eq(<featureSnake>.organizationId, orgId)` in `where`.
+4. No `SELECT *` — every `columns` object is explicit.
+5. No sensitive fields (`passwordHash`, `token`, `secret`, `apiKey`) in the DTO mapper return value.
+6. No raw SQL string interpolation.
+7. Cache key follows the `<feature>:org:{orgId}:{id}` pattern.
+
+If any check fails, do not write the file — report the issue and ask the user to clarify before continuing.
+
+---
 
 ## Post-Execution Hooks
 

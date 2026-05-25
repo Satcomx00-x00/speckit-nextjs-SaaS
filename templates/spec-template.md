@@ -1,131 +1,177 @@
 # Feature Specification: [FEATURE NAME]
 
-**Feature Branch**: `[###-feature-name]`
-
+**Feature slug**: `[feature-name]`
+**Feature flag**: `ff-[feature-name]` (default: OFF)
+**Feature branch**: `feat/[feature-name]`
 **Created**: [DATE]
-
 **Status**: Draft
+**RFC PR**: [link — must be merged before implementation PR is opened]
 
 **Input**: User description: "$ARGUMENTS"
 
-## User Scenarios & Testing *(mandatory)*
+---
+
+## User Stories *(mandatory)*
 
 <!--
-  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
-  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
-  you should still have a viable MVP (Minimum Viable Product) that delivers value.
-
-  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
-  Think of each story as a standalone slice of functionality that can be:
-  - Developed independently
-  - Tested independently
-  - Deployed independently
-  - Demonstrated to users independently
+  Each story is a binary, independently testable slice.
+  Acceptance criteria must be yes/no verifiable — no "should", "ideally", "if possible".
+  Prioritize by user value: P1 = blocks everything else, P3 = nice to have.
 -->
 
-### User Story 1 - [Brief Title] (Priority: P1)
+### Story 1 — [Brief Title] (P1)
 
-[Describe this user journey in plain language]
+**As** [role: owner / admin / member / viewer],
+**I want** [action],
+**so that** [benefit].
 
-**Why this priority**: [Explain the value and why it has this priority level]
+**Why P1**: [explain the value and why this is the most critical slice]
 
-**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
+**Primary path**:
+1. [step 1]
+2. [step 2]
+3. [step 3]
 
-**Acceptance Scenarios**:
+**Alternate paths**:
+- [alternate: e.g. empty state, pagination end]
 
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
-2. **Given** [initial state], **When** [action], **Then** [expected outcome]
+**Acceptance criteria** (binary — each must be verifiable yes/no):
+- [ ] AC-001: [Given X, when Y, then Z — observable in the UI or API response]
+- [ ] AC-002: [Given X, when Y, then Z]
+- [ ] AC-003: [Given X, when Y, then Z]
 
 ---
 
-### User Story 2 - [Brief Title] (Priority: P2)
+### Story 2 — [Brief Title] (P2)
 
-[Describe this user journey in plain language]
+**As** [role],
+**I want** [action],
+**so that** [benefit].
 
-**Why this priority**: [Explain the value and why it has this priority level]
-
-**Independent Test**: [Describe how this can be tested independently]
-
-**Acceptance Scenarios**:
-
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
+**Acceptance criteria**:
+- [ ] AC-004: [Given X, when Y, then Z]
+- [ ] AC-005: [Given X, when Y, then Z]
 
 ---
 
-### User Story 3 - [Brief Title] (Priority: P3)
-
-[Describe this user journey in plain language]
-
-**Why this priority**: [Explain the value and why it has this priority level]
-
-**Independent Test**: [Describe how this can be tested independently]
-
-**Acceptance Scenarios**:
-
-1. **Given** [initial state], **When** [action], **Then** [expected outcome]
+[Add more stories as needed. Each story must be independently deployable and testable.]
 
 ---
 
-[Add more user stories as needed, each with an assigned priority]
+## Non-Goals *(mandatory)*
 
-### Edge Cases
+What is explicitly out of scope for this feature:
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right edge cases.
--->
+- [Non-goal 1 — e.g. "Real-time collaboration (deferred to P3)"]
+- [Non-goal 2 — e.g. "Mobile-native push notifications"]
+- [Non-goal 3 — e.g. "Bulk export > 10k rows"]
 
-- What happens when [boundary condition]?
-- How does system handle [error scenario]?
+---
 
-## Requirements *(mandatory)*
+## Edge Cases *(mandatory)*
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right functional requirements.
--->
+- Empty state: what happens when [the list is empty / no data exists]?
+- Max length: what happens when [a field exceeds its maximum]?
+- Timeout: what happens when [the background job takes > N minutes]?
+- Offline: what happens when [the client loses connectivity mid-action]?
+- Unicode / emoji: what happens with [non-ASCII input in text fields]?
+- Concurrent writes: what happens when [two users edit the same resource simultaneously]?
+- Quota: what happens when [the org hits its plan limit]?
 
-### Functional Requirements
+---
 
-- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
-- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
-- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
-- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
-- **FR-005**: System MUST [behavior, e.g., "log all security events"]
+## RBAC Roles Affected
 
-*Example of marking unclear requirements:*
+| Role | Can do what |
+|---|---|
+| owner | [list actions] |
+| admin | [list actions] |
+| member | [list actions] |
+| viewer | [list actions — typically read-only] |
+| public | [list actions — typically none] |
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
+---
 
-### Key Entities *(include if feature involves data)*
+## Key Entities
 
-- **[Entity 1]**: [What it represents, key attributes without implementation]
-- **[Entity 2]**: [What it represents, relationships to other entities]
+- **[Entity 1]**: [what it represents, key attributes, relationships]
+- **[Entity 2]**: [what it represents, relationships to other entities]
 
-## Success Criteria *(mandatory)*
+Tenant scoping: every entity must carry `organizationId` as a non-nullable FK → `organizations.id`.
 
-<!--
-  ACTION REQUIRED: Define measurable success criteria.
-  These must be technology-agnostic and measurable.
--->
+---
 
-### Measurable Outcomes
+## Functional Requirements
 
-- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
-- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
-- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
-- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **FR-001**: System MUST [specific, verifiable capability]
+- **FR-002**: System MUST [specific, verifiable capability]
+- **FR-003**: System MUST [specific, verifiable capability]
+
+Flag requirements where the spec is unclear:
+- **FR-004**: System MUST [NEEDS CLARIFICATION: X not specified — options are A / B / C]
+
+---
+
+## Success Metrics *(mandatory)*
+
+Measurable, time-bound, technology-agnostic:
+
+| Metric | Target | Measurement |
+|---|---|---|
+| Adoption | ≥ X% of active orgs use the feature within 30 days | analytics event count |
+| J7 retention | ≥ Y% of users who try it return within 7 days | cohort analysis |
+| J30 retention | ≥ Z% retention at 30 days | cohort analysis |
+| p95 latency | < N ms end-to-end on primary mutation | Tempo / Grafana |
+| Error rate | < M% on primary procedures | GlitchTip / Loki |
+
+---
+
+## Rollback Thresholds
+
+Revert the feature flag (set to OFF for all orgs) if:
+
+- Error rate > [N]% over a 15-minute window
+- p95 latency > [N ms] over a 15-minute window
+- [Domain-specific threshold — e.g. "failed job rate > 5%"]
+
+Flag OFF restores previous behavior without a deployment.
+
+---
+
+## Marginal Cost Estimate
+
+| Resource | Per operation | At 10k ops/day | At 100k ops/day |
+|---|---|---|---|
+| Postgres rows | [+N] | [~Nk rows/day] | [~Nk rows/day] |
+| Redis keys | [+N] | negligible | negligible |
+| BullMQ / Temporal jobs | [+N] | [~Nk/day] | [~Nk/day] |
+| ClickHouse events | [+N] | [~Nk/day] | [~Nk/day] |
+| Storage (if files) | [+N bytes] | [~N GB/day] | [~N GB/day] |
+
+---
+
+## GDPR / Privacy Classification
+
+| Data field | Classification | Retention | Basis |
+|---|---|---|---|
+| [field name] | Personal / Sensitive / Non-personal | [N days / until deletion] | [consent / contract / legitimate interest] |
+
+Data minimization: collect only fields required for the feature. Provide deletion flow if personal data is stored.
+
+---
 
 ## Assumptions
 
-<!--
-  ACTION REQUIRED: The content in this section represents placeholders.
-  Fill them out with the right assumptions based on reasonable defaults
-  chosen when the feature description did not specify certain details.
--->
+- [Assumption about target users — e.g. "Users have stable internet connectivity"]
+- [Assumption about scope — e.g. "Mobile support is out of scope for v1"]
+- [Dependency — e.g. "Requires the organization plan quota service to be available"]
+- [Stack assumption — e.g. "BetterAuth session is available on all authenticated routes"]
 
-- [Assumption about target users, e.g., "Users have stable internet connectivity"]
-- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
-- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
-- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+---
+
+## Open Questions
+
+1. [Decision needed before implementation — e.g. "Soft-delete or hard-delete?"]
+2. [Decision needed — e.g. "Quota: per-org flat limit or per-plan tiered?"]
+
+*(Delete this section if there are none before the RFC is approved.)*
