@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-04-13T00:00:00Z",
+  "updated_at": "2026-05-25T00:00:00Z",
   "catalog_url": "https://raw.githubusercontent.com/github/spec-kit/main/workflows/catalog.json",
   "workflows": {
     "speckit": {
@@ -11,6 +11,15 @@
       "version": "1.0.0",
       "url": "https://raw.githubusercontent.com/github/spec-kit/main/workflows/speckit/workflow.yml",
       "tags": ["sdd", "full-cycle"]
+    },
+    "saas-feature": {
+      "id": "saas-feature",
+      "name": "SaaS Feature Delivery Cycle",
+      "description": "Production-grade feature delivery: scope → RFC → schema → DAL → services → tRPC → UI → E2E → quality gates → progressive rollout → observability",
+      "author": "satcom",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/saas-feature/workflow.yml",
+      "tags": ["saas", "multi-tenant", "full-cycle", "bun", "trpc", "drizzle", "temporal", "argocd"]
     }
   }
 }
