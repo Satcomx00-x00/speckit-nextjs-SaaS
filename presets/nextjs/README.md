@@ -18,6 +18,12 @@ This preset ships **behaviors, not a tech stack**. It does not pick your ORM, st
 | `commands/speckit.scaffold.route.md` | Command **`/speckit.scaffold.route`**. Scaffolds a Next.js App Router route segment: `page.tsx` (RSC + `generateMetadata`), `layout.tsx`, `loading.tsx` (accessible skeleton), `error.tsx` (`"use client"` boundary), `not-found.tsx`. Supports `--auth`, `--no-layout`, `--title`, and other flags. |
 | `commands/speckit.scaffold.dal.md` | Command **`/speckit.scaffold.dal`**. Scaffolds a DAL module at `lib/dal/<entity>.ts` with `import 'server-only'`, typed `Result<T>` envelope, schema-validated inputs, CRUD method stubs, and a DTO mapper. Supports `--db` (prisma / drizzle / kysely / pg), `--methods`, `--schema`, and `--no-result-envelope`. |
 | `commands/speckit.docs.sync.md` | Command **`/speckit.docs.sync`**. Syncs `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, and `GEMINI.md` from the installed `agent-context.md` template. Shows a diff (with conflict detection for custom additions) before writing. Supports `--dry-run`, `--force`, and `--targets`. |
+| `commands/speckit.adr.new.md` | Command **`/speckit.adr.new`**. Scaffolds a new Architecture Decision Record at `docs/adr/NNNN-<slug>.md` in MADR 4 (full) format. Auto-numbers, links the current commit, supports `--supersedes`, `--phase`, `--criticality`, and updates the ADR index at `docs/adr/README.md`. |
+| `commands/speckit.adr.supersede.md` | Command **`/speckit.adr.supersede`**. Marks an existing ADR as superseded and scaffolds its replacement. Preserves the audit trail (old ADR keeps content, gains `superseded_by` link) and carries `constitution_refs` over by default. |
+| `commands/speckit.adr.audit.md` | Command **`/speckit.adr.audit`**. Audits the codebase against accepted ADRs using the optional `audit:` front-matter block (rules: `forbid`, `require`, `prefer`). Honors the central waiver registry at `.specify/waivers.yml`, phase-gates findings, and surfaces ADRs without an `audit:` block as aspirational. |
+| `commands/speckit.context.refresh.md` | Command **`/speckit.context.refresh`**. Regenerates `.specify/memory/context-pack.md` — the one-page snapshot every new AI session reads first. Aggregates ADR index, open RFCs, in-flight plans, recent CHANGELOG entries, active/expired waivers, and recent session logs. Markdown-only. |
+| `commands/speckit.session.close.md` | Command **`/speckit.session.close`**. Writes a structured session log at `.specify/sessions/<date>-<slug>.md` capturing decisions, files touched, CHANGELOG additions, waivers added, and follow-ups queued for the next session. Auto-detects activity via git diff against the previous session's commit. |
+| `commands/speckit.handoff.md` | Command **`/speckit.handoff`**. Generates a curated, human-written handoff at `.specify/handoffs/<date>-<slug>.md` complementing the auto-generated context pack with "first 15 minutes", known traps, parked work, and a don't-touch list. Distinct from the context pack: this one is opinionated, that one is comprehensive. |
 | `scripts/bash/scan-repo.sh` · `scripts/powershell/scan-repo.ps1` | Repository scanners (inventory). Emit JSON per `scripts/SCHEMA.md` — `.md` inventory, parsed `package.json` and `tsconfig.json`, Next.js structure, `"use client"` / `"use server"` counts, DAL detection, CI workflows, env files, Node version pin, git metadata. |
 | `scripts/bash/audit-codebase.sh` · `scripts/powershell/audit-codebase.ps1` | Rule-based audit engine. 23 high-signal rules across TypeScript (compiler flags + type-system discipline), Frontend (RSC discipline, images, links, metadata), Backend (DAL `server-only`, env handling), Security (sessions, secrets, SQL, XSS), Performance, Infrastructure. Each finding carries `rule_id`, `severity`, `section`, `phase`, `scope`, `directive`, `remediation`, `file:line`, and a snippet. Designed for big codebases: single file enumeration, parallel grep via `xargs -P`, `--paths` / `--rules` / `--sections` filters, `--max-findings-per-rule` cap, `--list-rules` introspection. |
 | `scripts/SCHEMA.md` | Stable contract between scripts and commands (`schema_version: "1.0"`). |
@@ -108,21 +114,44 @@ You can pass freeform context with the command, e.g.:
 |---|---|
 | `/speckit.audit` | Regex-based audit against 23 rules — TypeScript, Frontend, Backend, Security, Performance, Infrastructure |
 | `/speckit.audit.deep` | Full audit: regex + `tsc --noEmit` + `eslint` + `npm audit` + LLM file-level confirmation + Server Action recipe check |
+| `/speckit.adr.audit` | Audit the codebase against accepted ADRs (forbid/require/prefer rules from each ADR's `audit:` block); honors `.specify/waivers.yml` |
+
+### Decision memory
+
+The memory layer is what keeps multi-session AI development consistent. ADRs
+capture the *why*, the context pack lets each new session bootstrap into
+current state, and session logs leave breadcrumbs from one iteration to the
+next.
+
+| Command | What it does |
+|---|---|
+| `/speckit.adr.new <title>` | Scaffold a new MADR 4 (full) ADR at `docs/adr/NNNN-<slug>.md`; updates the ADR index |
+| `/speckit.adr.supersede <id> <new-title>` | Mark an ADR as superseded and scaffold its replacement, preserving the audit trail |
+| `/speckit.context.refresh` | Regenerate `.specify/memory/context-pack.md` — ADRs + RFCs + in-flight plans + CHANGELOG + waivers + recent sessions |
+| `/speckit.session.close <title>` | Write `.specify/sessions/<date>-<slug>.md` capturing decisions, files touched, follow-ups queued |
+| `/speckit.handoff [slug]` | Write a curated `.specify/handoffs/<date>-<slug>.md` with "first 15 minutes", known traps, parked work, don't-touch list |
 
 ### Typical workflow
 
 ```
 1. /speckit.constitution.scan        # generate the project constitution
 2. /speckit.docs.sync                # wire agent context files
+3. /speckit.context.refresh          # build the first context pack
 
 # for each feature:
-3. /speckit.plan <feature>           # decompose the feature
-4. /speckit.tasks                    # generate implementation tasks
-5. /speckit.scaffold.route app/<path>  # scaffold route files
-6. /speckit.scaffold.dal <entity>    # scaffold DAL module
-7. ... implement ...
-8. /speckit.audit                    # pre-PR quality gate
-9. /speckit.audit.deep               # pre-release quality gate
+4. /speckit.plan <feature>           # decompose the feature
+5. /speckit.tasks                    # generate implementation tasks
+6. /speckit.scaffold.route app/<path>  # scaffold route files
+7. /speckit.scaffold.dal <entity>    # scaffold DAL module
+8. ... implement ...
+9. /speckit.adr.new <decision>       # record architectural decisions as they're made
+10. /speckit.audit                   # pre-PR quality gate (constitution rules)
+11. /speckit.adr.audit               # pre-PR quality gate (decision-specific rules)
+12. /speckit.audit.deep              # pre-release quality gate
+
+# at the end of each AI session:
+13. /speckit.session.close <title>   # write the session log + follow-ups
+14. /speckit.context.refresh         # refresh the snapshot for the next session
 ```
 
 ## Wiring the agent context
