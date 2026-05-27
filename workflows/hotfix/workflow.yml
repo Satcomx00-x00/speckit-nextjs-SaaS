@@ -1,0 +1,399 @@
+schema_version: "1.0"
+
+workflow:
+  id: "hotfix"
+  name: "Hotfix Delivery"
+  version: "1.0.0"
+  author: "satcom"
+  description: >-
+    Fast-path bug fix for the Delta-Global stack. Skips RFC and feature-flag
+    ceremony. Scopes the root cause → implements the fix → runs quality gates →
+    deploys through staging to production with mandatory prod-gate confirmation.
+    Use for: regressions, security patches, data integrity fixes, broken procedures.
+    Do NOT use for: new features (use saas-feature), large schema changes (use migration-only).
+
+requires:
+  speckit_version: ">=0.7.2"
+  integrations:
+    any: ["claude", "copilot", "gemini"]
+
+inputs:
+  bug_description:
+    type: string
+    required: true
+    prompt: "What is broken? Describe the symptom observed in production."
+
+  root_cause:
+    type: string
+    required: true
+    prompt: "What is the root cause? (hypothesis is fine if not yet confirmed)"
+
+  fix_description:
+    type: string
+    required: true
+    prompt: "What is the fix? One-sentence description of the code change."
+
+  affected_feature:
+    type: string
+    required: true
+    prompt: "Which feature slug is affected? (e.g. 'post-publishing', 'billing')"
+
+  severity:
+    type: string
+    default: "high"
+    enum: ["critical", "high", "medium"]
+    prompt: "Severity: critical (data loss / security / all users down), high (major feature broken), medium (degraded UX)"
+
+  integration:
+    type: string
+    default: "claude"
+    prompt: "AI coding integration to use (claude, copilot, gemini)"
+
+  needs_migration:
+    type: boolean
+    default: false
+    prompt: "Does the fix require a DB migration? (rare — use migration-only workflow if substantial)"
+
+  rollout_strategy:
+    type: string
+    default: "immediate"
+    enum: ["immediate", "progressive"]
+    prompt: "Rollout strategy: immediate (all orgs at once) or progressive (10% → 50% → 100%)"
+
+steps:
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 0 — Scope the fix
+  # ──────────────────────────────────────────────────────────────────
+  - id: scope
+    command: speckit.specify
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Hotfix scope for: {{ inputs.affected_feature }}
+
+        BUG: {{ inputs.bug_description }}
+        ROOT CAUSE: {{ inputs.root_cause }}
+        FIX: {{ inputs.fix_description }}
+        SEVERITY: {{ inputs.severity }}
+
+        Produce a concise fix scope:
+        - Confirmed root cause (or hypothesis + investigation steps)
+        - Exact files that need to change (no more than necessary)
+        - Risk surface: what else could this change break?
+        - Rollback plan: what happens if we revert this commit?
+        - Test strategy: what test(s) would catch a regression here?
+        - Monitoring: which Grafana panel / GlitchTip error proves the fix worked?
+
+        Hard constraints — do NOT expand scope:
+        - Fix only the reported bug; open a separate issue for anything else discovered
+        - If the fix requires a schema change > adding a column with a default, stop and use migration-only workflow
+        - No feature additions, no refactoring unrelated to the fix
+        - No new feature flags unless the fix needs a kill switch
+
+  - id: review-scope
+    type: gate
+    message: |
+      Review the fix scope before writing any code.
+      Confirm:
+      - Root cause is understood (not just symptoms)
+      - Blast radius is acceptable
+      - Rollback plan is clear
+      - No scope creep into unrelated changes
+      Severity: {{ inputs.severity }}
+    options: [approve, needs-more-investigation]
+    on_reject: abort
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 1 — Branch
+  # ──────────────────────────────────────────────────────────────────
+  - id: branch
+    type: shell
+    command: "git checkout main && git pull && git checkout -b fix/{{ inputs.affected_feature }}-hotfix"
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 2 — DB migration (conditional, rare)
+  # ──────────────────────────────────────────────────────────────────
+  - id: migration
+    type: if
+    condition: "{{ inputs.needs_migration == true }}"
+    then:
+      - id: schema-fix
+        command: speckit.tasks
+        integration: "{{ inputs.integration }}"
+        input:
+          args: |
+            Implement the minimal Drizzle schema change required to fix:
+            {{ inputs.bug_description }}
+
+            Rules:
+            - uuid().primaryKey().defaultRandom() on any new table id
+            - organizationId FK + index on any new tenant-scoped table
+            - timestamps with withTimezone: true
+            - drizzle-kit generate only — no handwritten SQL
+            - Forward-compatible: no NOT NULL on existing column without default
+            - No DROP without a documented two-step migration plan
+
+      - id: migration-generate
+        type: shell
+        command: "bun --filter @delta-global/db drizzle-kit generate"
+
+      - id: review-migration-sql
+        type: gate
+        message: |
+          Review the generated SQL migration line by line.
+          - No NOT NULL on existing table without a default
+          - No DROP without a two-step plan (add → backfill → switch → drop)
+          - CREATE INDEX CONCURRENTLY if table > 100k rows
+          - Minimal change — only what is required for the fix
+          If this migration is substantial, abort and use the migration-only workflow instead.
+        options: [approve, reject, use-migration-only-workflow]
+        on_reject: abort
+
+      - id: migration-apply-local
+        type: shell
+        command: "bun --filter @delta-global/db drizzle-kit migrate"
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 3 — Implement the fix
+  # ──────────────────────────────────────────────────────────────────
+  - id: fix
+    command: speckit.tasks
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Implement the hotfix for "{{ inputs.affected_feature }}":
+
+        BUG: {{ inputs.bug_description }}
+        ROOT CAUSE: {{ inputs.root_cause }}
+        FIX: {{ inputs.fix_description }}
+
+        Hard constraints (violations abort the fix):
+        - Touch ONLY the files identified in the scope
+        - No raw SQL — drizzle-kit generate only
+        - No @delta-global/analytics-db imports in apps/api or apps/web
+        - organizationId must remain on every tenant query (do not remove tenant scoping)
+        - Secrets via Infisical — never process.env directly
+        - No relative cross-workspace imports
+        - No z.any / z.unknown / z.record(z.any) in Zod schemas
+        - If the fix changes a tRPC procedure: use orgScopedProcedure, keep .input()/.output() from @delta-global/shared
+        - If the fix changes a DAL function: keep import "server-only" + organizationId scoping
+        - Do not remove or bypass the feature flag guard (if one exists for this feature)
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 4 — Regression tests
+  # ──────────────────────────────────────────────────────────────────
+  - id: regression-tests
+    command: speckit.tasks
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Write a regression test that would catch the bug described below if it were re-introduced:
+
+        BUG: {{ inputs.bug_description }}
+        FIX: {{ inputs.fix_description }}
+        AFFECTED FEATURE: {{ inputs.affected_feature }}
+
+        Rules:
+        - Use bun:test for unit/integration tests
+        - Use Playwright for E2E regression (only if the bug was UI-visible)
+        - The test must FAIL on the unfixed code and PASS on the fixed code
+        - For DAL/procedure bugs: use Testcontainers (Postgres + Redis) — no mocks
+        - For tenant-isolation bugs: add to isolation.spec.ts tagged @critical
+        - Keep the test minimal — test exactly the regression, nothing more
+        - Place in the correct test directory:
+            apps/api/test/{{ inputs.affected_feature }}/
+            apps/web/tests/e2e/{{ inputs.affected_feature }}/
+
+  - id: run-regression-tests
+    type: shell
+    command: "bun test apps/api/test/{{ inputs.affected_feature }}/"
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 5 — Quality gates
+  # ──────────────────────────────────────────────────────────────────
+  - id: quality-gates
+    type: fan-out
+    over:
+      - { name: "biome",     cmd: "bun run lint" }
+      - { name: "typecheck", cmd: "bun run typecheck" }
+      - { name: "build",     cmd: "turbo run build --filter=...[HEAD^1]" }
+      - { name: "gitleaks",  cmd: "gitleaks detect --no-banner" }
+      - { name: "audit",     cmd: "bun pm audit --severity high" }
+    step:
+      type: shell
+      command: "{{ item.cmd }}"
+
+  - id: quality-aggregate
+    type: fan-in
+    from: quality-gates
+    aggregate: >-
+      All quality gates must return exit code 0. Report which gate failed
+      and abort if any did.
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 6 — Self-review
+  # ──────────────────────────────────────────────────────────────────
+  - id: self-review
+    command: speckit.analyze
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Hotfix self-review for "{{ inputs.affected_feature }}":
+
+        Review the diff for:
+        - Fix does not introduce new tenant-isolation violations (organizationId missing from queries)
+        - No analytics-db imports added in apps/api or apps/web
+        - No raw SQL added
+        - No sensitive fields added to DTO schemas
+        - No z.any / z.unknown / z.record(z.any) added
+        - No relative cross-workspace imports added
+        - No console.log / debugger left in
+        - Regression test is present and tests exactly the described bug
+        - Diff is minimal — no unrelated changes included
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 7 — PR
+  # ──────────────────────────────────────────────────────────────────
+  - id: pr-description
+    type: prompt
+    integration: "{{ inputs.integration }}"
+    prompt: |
+      Generate the PR description for hotfix "{{ inputs.affected_feature }}":
+
+      BUG: {{ inputs.bug_description }}
+      ROOT CAUSE: {{ inputs.root_cause }}
+      FIX: {{ inputs.fix_description }}
+      SEVERITY: {{ inputs.severity }}
+
+      Include:
+      - Conventional Commit title: fix({{ inputs.affected_feature }}): <short description>
+      - Root cause analysis (1 paragraph)
+      - What changed (files + reason)
+      - Regression test added (file path + what it asserts)
+      - Rollback plan (revert commit SHA — behavior reverts immediately)
+      - Risk assessment (what else could this affect?)
+      - Link to the GlitchTip error or Grafana panel that shows the bug
+
+  - id: ready-for-review
+    type: gate
+    message: |
+      Quality gates green. Open the PR.
+      Severity: {{ inputs.severity }}
+      Required approvers:
+        - critical → 2 approvers (one must be tech lead)
+        - high     → 1 approver
+        - medium   → 1 approver
+      Do not merge until CI is green including regression test.
+    options: [approve, reject]
+    on_reject: abort
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 8 — Deploy to staging
+  # ──────────────────────────────────────────────────────────────────
+  - id: deploy-staging
+    type: prompt
+    integration: "{{ inputs.integration }}"
+    prompt: >-
+      Open a PR on platform-infra updating infra/overlays/staging/ with the
+      new image tag. Wait for ArgoCD staging sync. If needs_migration is true,
+      confirm CNPG migration ran before the app pod restarted.
+
+  - id: verify-staging
+    type: gate
+    message: |
+      Verify the fix on staging:
+      - Reproduce the original bug scenario — confirm it no longer occurs
+      - Regression test passes in CI
+      - No new GlitchTip errors since deploy
+      - Loki logs show clean startup
+      - Grafana: error rate back to baseline
+    options: [verified, still-broken]
+    on_reject: abort
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 9 — Production deploy
+  # ──────────────────────────────────────────────────────────────────
+  - id: prod-gate
+    type: gate
+    message: |
+      Staging verified. Promotion to PRODUCTION requires manual confirmation.
+      Type 'DEPLOY' to confirm. This is the last abort point.
+      Severity: {{ inputs.severity }}
+      Rollback: revert the merge commit — no flag toggle needed.
+    options: [DEPLOY, abort]
+    on_reject: abort
+
+  - id: deploy-prod
+    type: prompt
+    integration: "{{ inputs.integration }}"
+    prompt: >-
+      Open a PR on platform-infra updating infra/overlays/production/ with the
+      new image tag. Wait for ArgoCD prod sync. If needs_migration is true,
+      confirm CNPG migration ran successfully before app pod restart.
+
+  - id: rollout
+    type: switch
+    on: "{{ inputs.rollout_strategy }}"
+    cases:
+
+      immediate:
+        - id: monitor-immediate
+          type: gate
+          message: |
+            Fix deployed to 100% of production. Monitor for 2 hours:
+            - GlitchTip: zero new instances of the original error
+            - Grafana: error rate at or below pre-bug baseline
+            - p95 latency normal
+            - No new unrelated errors introduced
+          options: [stable, regressed]
+          on_reject: abort
+
+      progressive:
+        - id: rollout-10
+          type: gate
+          message: "Fix live for 10% of orgs. Observe 30 min. Confirm error resolved."
+          options: [pass, fail]
+          on_reject: abort
+
+        - id: rollout-50
+          type: gate
+          message: "Fix live for 50% of orgs. Observe 30 min."
+          options: [pass, fail]
+          on_reject: abort
+
+        - id: rollout-100
+          type: gate
+          message: "Fix live for 100% of orgs. Monitor 2h for stability."
+          options: [pass, fail]
+          on_reject: abort
+
+  # ──────────────────────────────────────────────────────────────────
+  # PHASE 10 — Post-mortem (critical/high only)
+  # ──────────────────────────────────────────────────────────────────
+  - id: postmortem
+    type: if
+    condition: "{{ inputs.severity == 'critical' or inputs.severity == 'high' }}"
+    then:
+      - id: postmortem-doc
+        type: prompt
+        integration: "{{ inputs.integration }}"
+        prompt: |
+          Write a post-mortem for the hotfix on "{{ inputs.affected_feature }}":
+
+          BUG: {{ inputs.bug_description }}
+          ROOT CAUSE: {{ inputs.root_cause }}
+          SEVERITY: {{ inputs.severity }}
+
+          Include:
+          - Timeline (detection → root cause confirmed → fix merged → prod stable)
+          - Impact (how many orgs/users affected, for how long)
+          - Root cause analysis (5 Whys)
+          - What worked well in the response
+          - What slowed us down
+          - Action items to prevent recurrence:
+            1. Missing test → add regression test (done in PHASE 4)
+            2. Detection gap → alert or monitoring improvement
+            3. Architectural issue → link to follow-up issue
+          - Links: GlitchTip error, Grafana panel, PR, post-mortem doc
+
+          Save to: docs/postmortems/{{ inputs.affected_feature }}-<ISO date>.md
