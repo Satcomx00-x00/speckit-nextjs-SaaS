@@ -95,6 +95,11 @@ provides:
       file: "commands/speckit.handoff.md"
       description: "Generate a curated, human-written handoff at .specify/handoffs/<date>-<slug>.md complementing the auto-generated context pack with 'first 15 minutes', known traps, parked work, and don't-touch list."
 
+    - type: "command"
+      name: "speckit.help"
+      file: "commands/speckit.help.md"
+      description: "List every spec-kit command grouped by phase of use (bootstrap / planning / implementation / quality / session) with one-line descriptions. Prints a state-aware 'suggested next' line."
+
 tags:
   - "nextjs"
   - "web"

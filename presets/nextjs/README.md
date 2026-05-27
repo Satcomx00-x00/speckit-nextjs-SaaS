@@ -24,6 +24,7 @@ This preset ships **behaviors, not a tech stack**. It does not pick your ORM, st
 | `commands/speckit.context.refresh.md` | Command **`/speckit.context.refresh`**. Regenerates `.specify/memory/context-pack.md` — the one-page snapshot every new AI session reads first. Aggregates ADR index, open RFCs, in-flight plans, recent CHANGELOG entries, active/expired waivers, and recent session logs. Markdown-only. |
 | `commands/speckit.session.close.md` | Command **`/speckit.session.close`**. Writes a structured session log at `.specify/sessions/<date>-<slug>.md` capturing decisions, files touched, CHANGELOG additions, waivers added, and follow-ups queued for the next session. Auto-detects activity via git diff against the previous session's commit. |
 | `commands/speckit.handoff.md` | Command **`/speckit.handoff`**. Generates a curated, human-written handoff at `.specify/handoffs/<date>-<slug>.md` complementing the auto-generated context pack with "first 15 minutes", known traps, parked work, and a don't-touch list. Distinct from the context pack: this one is opinionated, that one is comprehensive. |
+| `commands/speckit.help.md` | Command **`/speckit.help`**. Lists every spec-kit command grouped by phase of use (bootstrap / planning / implementation / quality / session) with one-line descriptions. Reads from `preset.yml`; supports `--phase`, `--detail long`, `--installed-only`. Prints a state-aware "suggested next" line. |
 | `scripts/bash/scan-repo.sh` · `scripts/powershell/scan-repo.ps1` | Repository scanners (inventory). Emit JSON per `scripts/SCHEMA.md` — `.md` inventory, parsed `package.json` and `tsconfig.json`, Next.js structure, `"use client"` / `"use server"` counts, DAL detection, CI workflows, env files, Node version pin, git metadata. |
 | `scripts/bash/audit-codebase.sh` · `scripts/powershell/audit-codebase.ps1` | Rule-based audit engine. 23 high-signal rules across TypeScript (compiler flags + type-system discipline), Frontend (RSC discipline, images, links, metadata), Backend (DAL `server-only`, env handling), Security (sessions, secrets, SQL, XSS), Performance, Infrastructure. Each finding carries `rule_id`, `severity`, `section`, `phase`, `scope`, `directive`, `remediation`, `file:line`, and a snippet. Designed for big codebases: single file enumeration, parallel grep via `xargs -P`, `--paths` / `--rules` / `--sections` filters, `--max-findings-per-rule` cap, `--list-rules` introspection. |
 | `scripts/SCHEMA.md` | Stable contract between scripts and commands (`schema_version: "1.0"`). |
@@ -130,6 +131,12 @@ next.
 | `/speckit.context.refresh` | Regenerate `.specify/memory/context-pack.md` — ADRs + RFCs + in-flight plans + CHANGELOG + waivers + recent sessions |
 | `/speckit.session.close <title>` | Write `.specify/sessions/<date>-<slug>.md` capturing decisions, files touched, follow-ups queued |
 | `/speckit.handoff [slug]` | Write a curated `.specify/handoffs/<date>-<slug>.md` with "first 15 minutes", known traps, parked work, don't-touch list |
+
+### Meta
+
+| Command | What it does |
+|---|---|
+| `/speckit.help [--phase <p>] [--detail long]` | List every command grouped by phase of use; prints a state-aware "suggested next" line |
 
 ### Typical workflow
 
