@@ -1,5 +1,15 @@
 ---
 description: "Scaffold a tRPC router for the Delta-Global stack without the full feature scaffold"
+handoffs:
+  - label: Write procedure tests
+    agent: speckit.checklist
+    prompt: Run preset:pre-merge against the feature that owns this router.
+  - label: Analyze consistency
+    agent: speckit.analyze
+    prompt: Cross-check the new router against the plan for RBAC gaps and hard constraint violations.
+  - label: Scaffold the route
+    agent: speckit.scaffold.route
+    prompt: Scaffold the RSC page that consumes this router.
 ---
 
 # speckit.scaffold.trpc
