@@ -3,7 +3,7 @@ schema_version: "1.0"
 workflow:
   id: "migration-only"
   name: "DB Migration Delivery"
-  version: "1.1.0"
+  version: "1.2.0"
   author: "satcom"
   description: >-
     Safe path for schema-only changes. Designed for migrations too substantial

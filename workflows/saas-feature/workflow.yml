@@ -3,7 +3,7 @@ schema_version: "1.0"
 workflow:
   id: "saas-feature"
   name: "SaaS Feature Delivery Cycle"
-  version: "1.1.0"
+  version: "1.2.0"
   author: "satcom"
   description: >-
     Production-grade feature delivery for a multi-tenant SaaS webapp.

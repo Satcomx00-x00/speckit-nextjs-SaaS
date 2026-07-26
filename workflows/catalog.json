@@ -18,9 +18,9 @@
     "saas-feature": {
       "id": "saas-feature",
       "name": "SaaS Feature Delivery Cycle",
-      "description": "Production-grade feature delivery: scope → RFC → schema → DAL → services → API → UI → E2E → quality gates → verify → progressive rollout → observability. Tool commands are inputs — adapts to any Next.js/TS SaaS.",
+      "description": "Production-grade feature delivery: intake-driven scope → RFC with Service Interaction Map → schema → DAL → services → API → UI → E2E → quality gates → verify → progressive rollout → observability. Tool commands are inputs — adapts to any Next.js/TS SaaS.",
       "author": "satcom",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/saas-feature/workflow.yml",
       "tags": [
         "saas",
@@ -49,7 +49,7 @@
       "name": "DB Migration Delivery",
       "description": "Safe path for schema-only changes with explicit expand-contract phases: scope → SQL review gate → apply local → quality gates → migration record → staging verify → prod-gate (DEPLOY confirm) → post-deploy verify.",
       "author": "satcom",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/migration-only/workflow.yml",
       "tags": [
         "migration",
