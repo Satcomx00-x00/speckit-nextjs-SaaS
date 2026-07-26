@@ -36,6 +36,9 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 **Route prefix**: `<app/...>`
 **Phase**: <P1 | P2 | P3 | P4>
 **Auth**: <none | required | required + ownership>
+**Tenancy**: {{ var.tenancy_model }} (tenant key: `{{ var.tenancy_column }}` — every
+tenant-scoped table, query, and cache key carries it; for `user-scoped`
+projects it is the owning user, for `single-tenant` note the waiver)
 **Constitution ref**: `.specify/memory/constitution.md`
 
 ---

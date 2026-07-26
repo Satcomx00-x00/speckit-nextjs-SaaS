@@ -107,7 +107,7 @@ For each item in the checklist, inspect the resolved artifacts and assign a verd
 
 | Item pattern | How to verify |
 |---|---|
-| "organizationId on every tenant table" | Check Drizzle schema files for `organizationId` column |
+| "{{ var.tenancy_column }} on every tenant table" | Check Drizzle schema files for `{{ var.tenancy_column }}` column |
 | "feature flag declared and OFF" | Check flag service + procedure guards + page guards |
 | "@critical isolation tests green" | Check `isolation.spec.ts` tagged `@critical` exists and CI is passing |
 | "Diff < 600 lines" | Run `git diff --stat HEAD \| tail -1` and parse the number |
@@ -115,7 +115,7 @@ For each item in the checklist, inspect the resolved artifacts and assign a verd
 | "Infisical secrets registered" | Check `.infisical.json` or Infisical config for new env var entries |
 | ".env.example updated" | Check `.env.example` contains new env var keys (values can be placeholders) |
 | "No raw SQL" | Search for `sql\`` template literals outside migration files |
-| "No analytics-db imports" | Search for `@delta-global/analytics-db` in `apps/api` and `apps/web` |
+| "No analytics-db imports" | Search for `{{ var.package_scope }}/analytics-db` in `apps/api` and `apps/web` |
 | "No relative cross-workspace imports" | Search for `../../packages` or `../../../apps` patterns |
 | "Migration rollback plan documented" | Check PR description or migration file for rollback instructions |
 | "Conventional Commit title" | PR title matches `^(feat|fix|refactor|chore|docs|test|perf)(\(.+\))?:` |

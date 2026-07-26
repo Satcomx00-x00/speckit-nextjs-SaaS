@@ -65,7 +65,7 @@ Produce a structured plan using the template below. Omit any sub-section that is
 
 | Table | Key columns | Indexes | Relations |
 |---|---|---|---|
-| `<feature_snake>` | `id uuid pk`, `organizationId uuid fk`, `createdAt`, `updatedAt` | `(organizationId, createdAt desc)` | `→ organizations` |
+| `<feature_snake>` | `id uuid pk`, `{{ var.tenancy_column }} uuid fk`, `createdAt`, `updatedAt` | `({{ var.tenancy_column }}, createdAt desc)` | `→ organizations` |
 
 **Migration notes**:
 - Forward-compatible: <yes — add-only / no — requires two-step>
@@ -89,7 +89,7 @@ Produce a structured plan using the template below. Omit any sub-section that is
 | `<Feature>ErrorCode` | const literal | procedures + services |
 
 **Hard rules**: no `z.any()`, `z.unknown()`, `z.record(z.any())` — Biome fails on these.
-`organizationId` is absent from all input schemas (extracted from BetterAuth session in procedures).
+`{{ var.tenancy_column }}` is absent from all input schemas (extracted from BetterAuth session in procedures).
 
 ---
 
@@ -105,7 +105,7 @@ Produce a structured plan using the template below. Omit any sub-section that is
 | `<feature>.update` | mutation | `Update<Feature>Input` | `<Feature>Dto` | member | yes |
 | `<feature>.delete` | mutation | `Get<Feature>Input` | void | admin | yes |
 
-**All procedures use `orgScopedProcedure`** — `organizationId` extracted from BetterAuth session, NEVER from input.
+**All procedures use `orgScopedProcedure`** — `{{ var.tenancy_column }}` extracted from BetterAuth session, NEVER from input.
 
 **Hono routes**: only for webhooks / mobile clients / streaming — not for internal tRPC calls.
 
@@ -125,8 +125,8 @@ Produce a structured plan using the template below. Omit any sub-section that is
 
 **Hard rules**:
 - `import 'server-only'` as first line
-- `organizationId` required parameter on every function — never optional
-- `eq(table.organizationId, orgId)` in every `where` clause
+- `{{ var.tenancy_column }}` required parameter on every function — never optional
+- `eq(table.{{ var.tenancy_column }}, orgId)` in every `where` clause
 - Cursor-based pagination only — no `OFFSET`
 - Explicit column selection — no `SELECT *`
 - Sensitive fields excluded from returned rows
@@ -223,7 +223,7 @@ Evaluated by the `can<Feature>` service function — not inline in the procedure
 |---|---|---|
 | Loading | `loading.tsx` + `<Feature>ListSkeleton` | Skeleton matching final layout, `aria-busy` |
 | Empty | `<Feature>List` empty branch | Illustration + copy + primary CTA |
-| Error | `error.tsx` | GlitchTip capture + "Réessayer" button |
+| Error | `error.tsx` | GlitchTip capture + "{{ var.retry_label }}" button |
 | Success | `<Feature>List` populated branch | Data rendered, toast on mutation |
 
 ---
@@ -246,7 +246,7 @@ Evaluated by the `can<Feature>` service function — not inline in the procedure
 | Signal | What | Where |
 |---|---|---|
 | OTel span | `org.id`, `user.id`, `procedure.name` | tRPC middleware |
-| Structured log | `organizationId`, `userId`, `correlationId`, `durationMs` | procedure boundary |
+| Structured log | `{{ var.tenancy_column }}`, `userId`, `correlationId`, `durationMs` | procedure boundary |
 | Analytics event | `<feature>.created` / `<feature>.updated` etc. | ClickHouse — **not Postgres** |
 | Error capture | GlitchTip `captureException` | `error.tsx` + procedure catch |
 | Alert | error_rate > 1% / 15m, p95 > threshold / 15m | Grafana Alerting |
@@ -255,12 +255,12 @@ Evaluated by the `can<Feature>` service function — not inline in the procedure
 
 ## 14. Security Checklist
 
-- [ ] `organizationId` extracted from BetterAuth session — never from input
-- [ ] `eq(table.organizationId, orgId)` in every DAL query
+- [ ] `{{ var.tenancy_column }}` extracted from BetterAuth session — never from input
+- [ ] `eq(table.{{ var.tenancy_column }}, orgId)` in every DAL query
 - [ ] Role checked via `can<Feature>(ctx.member.role, action)` in every mutation
 - [ ] ioredis rate limit: `rl:<procedure.name>:{userId}` before writes
 - [ ] No raw SQL anywhere (drizzle-kit only)
-- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
 - [ ] Secrets via `env.ts` + Infisical — never `process.env` directly
 - [ ] No sensitive fields in DTO schemas or cache values
 

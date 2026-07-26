@@ -61,7 +61,7 @@ apps/web/
 ├── app/(app)/[workspace]/[feature-name]/
 │   ├── page.tsx                             ← RSC, SDK createCaller, flag guard
 │   ├── loading.tsx                          ← Skeleton component
-│   └── error.tsx                           ← GlitchTip capture, Réessayer
+│   └── error.tsx                           ← GlitchTip capture, {{ var.retry_label }}
 └── components/features/[feature-name]/
     ├── Create[Feature]Form.tsx              ← react-hook-form + useMutation
     ├── [Feature]List.tsx                    ← useQuery with initialData
@@ -80,7 +80,7 @@ apps/web/
 
 | Table | Key columns | Indexes | Relations |
 |---|---|---|---|
-| `[feature_snake]` | `id uuid pk default random()`, `organizationId uuid fk`, `…`, `createdAt`, `updatedAt` | `(organizationId, createdAt desc)` | `→ organizations` |
+| `[feature_snake]` | `id uuid pk default random()`, `{{ var.tenancy_column }} uuid fk`, `…`, `createdAt`, `updatedAt` | `({{ var.tenancy_column }}, createdAt desc)` | `→ organizations` |
 
 **Migration notes**:
 - Forward-compatible: [yes — add-only / no — two-step required]
@@ -117,7 +117,7 @@ apps/web/
 | `[feature].update` | mutation | `Update[Feature]Input` | `[Feature]Dto` | member | yes |
 | `[feature].delete` | mutation | `Get[Feature]Input` | void | admin | yes |
 
-All use `orgScopedProcedure`. `organizationId` from session — never from input.
+All use `orgScopedProcedure`. `{{ var.tenancy_column }}` from session — never from input.
 
 ---
 
@@ -197,7 +197,7 @@ React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
 | Signal | Attribute | Tool |
 |---|---|---|
 | OTel span | `org.id`, `user.id`, `procedure.name` | Tempo |
-| Structured log | `organizationId`, `userId`, `correlationId`, `durationMs` | Loki |
+| Structured log | `{{ var.tenancy_column }}`, `userId`, `correlationId`, `durationMs` | Loki |
 | Analytics event | `[feature].created`, `[feature].updated` | ClickHouse only |
 | Error capture | GlitchTip `captureException` | error.tsx + catch |
 | Alert | error_rate > 1% / p95 > threshold | Grafana Alerting |
@@ -218,12 +218,12 @@ React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
 
 ## 12. Security Checklist
 
-- [ ] `organizationId` extracted from BetterAuth session — never from procedure input
-- [ ] Every DAL query includes `eq(table.organizationId, orgId)` in `where`
+- [ ] `{{ var.tenancy_column }}` extracted from BetterAuth session — never from procedure input
+- [ ] Every DAL query includes `eq(table.{{ var.tenancy_column }}, orgId)` in `where`
 - [ ] RBAC checked via `can[Feature](ctx.member.role, action)` in every mutation
 - [ ] ioredis rate limit on writes: `rl:[feature].[action]:{userId}`
 - [ ] No raw SQL — `drizzle-kit generate` only
-- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
 - [ ] Secrets via `env.ts` + Infisical
 - [ ] Sensitive fields absent from DTO schemas and cache values
 

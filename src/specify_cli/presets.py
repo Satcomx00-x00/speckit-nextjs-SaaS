@@ -83,6 +83,59 @@ def _substitute_core_template(
     return body.replace("{CORE_TEMPLATE}", core_body), core_frontmatter
 
 
+_VARIABLE_PATTERN = re.compile(r"\{\{\s*var\.([a-z][a-z0-9_]*)\s*\}\}")
+
+
+def substitute_preset_variables(content: str, variables: Dict[str, Any]) -> str:
+    """Replace ``{{ var.<name> }}`` placeholders with resolved values.
+
+    Unknown variables are left in place so they stay visible in the
+    installed output instead of silently vanishing.
+    """
+    def _repl(match: "re.Match[str]") -> str:
+        name = match.group(1)
+        if name in variables:
+            return str(variables[name])
+        return match.group(0)
+
+    return _VARIABLE_PATTERN.sub(_repl, content)
+
+
+def resolve_preset_variables(manifest: "PresetManifest", project_root: Path) -> Dict[str, Any]:
+    """Merge a preset's declared variable defaults with project overrides.
+
+    Project overrides live in ``.specify/preset-variables.yml`` and may be
+    scoped per preset id::
+
+        nextjs:
+          tenancy_column: ownerId
+        delta-global:
+          package_scope: "@acme"
+
+    or flat (applied to every preset)::
+
+        tenancy_column: ownerId
+    """
+    variables = dict(manifest.variables)
+
+    overrides_path = project_root / ".specify" / "preset-variables.yml"
+    if overrides_path.is_file():
+        try:
+            data = yaml.safe_load(overrides_path.read_text(encoding="utf-8")) or {}
+        except (yaml.YAMLError, OSError):
+            return variables
+        if isinstance(data, dict):
+            # Flat overrides first, then preset-scoped (scoped wins)
+            for key, value in data.items():
+                if not isinstance(value, dict) and key in variables:
+                    variables[key] = value
+            scoped = data.get(manifest.id)
+            if isinstance(scoped, dict):
+                for key, value in scoped.items():
+                    variables[key] = value
+    return variables
+
+
 @dataclass
 class PresetCatalogEntry:
     """Represents a single entry in the preset catalog stack."""
@@ -260,6 +313,36 @@ class PresetManifest:
                         "must be lowercase alphanumeric with hyphens only"
                     )
 
+        # Validate variables section (optional)
+        variables = self.data.get("variables")
+        if variables is not None:
+            if not isinstance(variables, dict):
+                raise PresetValidationError(
+                    "'variables' must be a mapping of name → default or "
+                    "name → {default, description}"
+                )
+            for var_name, spec in variables.items():
+                if not re.match(r'^[a-z][a-z0-9_]*$', str(var_name)):
+                    raise PresetValidationError(
+                        f"Invalid variable name '{var_name}': must be "
+                        "lowercase snake_case starting with a letter"
+                    )
+                if isinstance(spec, dict):
+                    if "default" not in spec:
+                        raise PresetValidationError(
+                            f"Variable '{var_name}': mapping form requires "
+                            "a 'default' key"
+                        )
+                    if not isinstance(spec["default"], (str, int, float, bool)):
+                        raise PresetValidationError(
+                            f"Variable '{var_name}': default must be a scalar"
+                        )
+                elif not isinstance(spec, (str, int, float, bool)):
+                    raise PresetValidationError(
+                        f"Variable '{var_name}': value must be a scalar or a "
+                        "mapping with a 'default' key"
+                    )
+
     @property
     def id(self) -> str:
         """Get preset ID."""
@@ -299,6 +382,22 @@ class PresetManifest:
     def tags(self) -> List[str]:
         """Get preset tags."""
         return self.data.get("tags", [])
+
+    @property
+    def variables(self) -> Dict[str, Any]:
+        """Get declared variables as name → default value.
+
+        Normalizes both spellings (``name: default`` and
+        ``name: {default: ..., description: ...}``) to plain defaults.
+        """
+        raw = self.data.get("variables") or {}
+        resolved: Dict[str, Any] = {}
+        for var_name, spec in raw.items():
+            if isinstance(spec, dict):
+                resolved[var_name] = spec.get("default", "")
+            else:
+                resolved[var_name] = spec
+        return resolved
 
     def get_hash(self) -> str:
         """Calculate SHA256 hash of manifest file."""
@@ -682,6 +781,33 @@ class PresetManager:
         return registrar.register_commands_for_all_agents(
             commands_to_register, manifest.id, preset_dir, self.project_root
         )
+
+    def _apply_preset_variables(self, manifest: PresetManifest, dest_dir: Path) -> None:
+        """Rewrite the installed preset's provided files with resolved variables.
+
+        No-op when the preset declares no variables. Files that fail to
+        read/write are skipped rather than aborting the install — an
+        unresolved placeholder is visible and recoverable, a failed install
+        is not.
+        """
+        if not manifest.variables:
+            return
+
+        variables = resolve_preset_variables(manifest, self.project_root)
+        for tmpl in manifest.templates:
+            file_rel = tmpl.get("file")
+            if not file_rel:
+                continue
+            target = dest_dir / file_rel
+            if not target.is_file():
+                continue
+            try:
+                content = target.read_text(encoding="utf-8")
+                substituted = substitute_preset_variables(content, variables)
+                if substituted != content:
+                    target.write_text(substituted, encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
 
     def _unregister_commands(self, registered_commands: Dict[str, List[str]]) -> None:
         """Remove previously registered command files from agent directories.
@@ -1519,6 +1645,12 @@ class PresetManager:
             shutil.rmtree(dest_dir)
 
         shutil.copytree(source_dir, dest_dir)
+
+        # Resolve {{ var.* }} placeholders into the installed copy so every
+        # downstream consumer (agent registration, skills, composition,
+        # template resolution) sees final values. The source preset keeps
+        # its placeholders; only the installed files are rewritten.
+        self._apply_preset_variables(manifest, dest_dir)
 
         # Pre-register the preset so that composition resolution can see it
         # in the priority stack when resolving composed command content.

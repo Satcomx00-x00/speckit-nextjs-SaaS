@@ -71,22 +71,22 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 - [ ] Output schemas: `[Feature]Dto`, `[Feature]ListDto`
 - [ ] `[Feature]ErrorCode` as `const` literal
 - [ ] No `z.any()`, `z.unknown()`, `z.record(z.any())`
-- [ ] `organizationId` absent from all input schemas
+- [ ] `{{ var.tenancy_column }}` absent from all input schemas
 - [ ] Export from barrel; `bun run typecheck` passes
 
 ### TASK-003 — Implement Drizzle schema `packages/db/src/schema/[feature-name].ts`
 *Depends on*: TASK-002
 - [ ] `uuid().primaryKey().defaultRandom()` on `id`
-- [ ] `organizationId` FK → `organizations.id`
+- [ ] `{{ var.tenancy_column }}` FK → `{{ var.tenant_table }}.id`
 - [ ] Timestamps with `withTimezone: true`
-- [ ] Index on `(organizationId, createdAt desc)`
+- [ ] Index on `({{ var.tenancy_column }}, createdAt desc)`
 - [ ] `InferSelectModel` / `InferInsertModel` types exported
 
 ### TASK-004 — Generate and review migration
 *Depends on*: TASK-003
-- [ ] `bun --filter @delta-global/db drizzle-kit generate` produces clean SQL
+- [ ] `bun --filter {{ var.package_scope }}/db drizzle-kit generate` produces clean SQL
 - [ ] Migration reviewed line-by-line (no NOT NULL without default, no DROP without plan)
-- [ ] `bun --filter @delta-global/db drizzle-kit migrate` applies cleanly locally
+- [ ] `bun --filter {{ var.package_scope }}/db drizzle-kit migrate` applies cleanly locally
 
 ### TASK-005 — [P] Add seed data in `scripts/seed.ts`
 *Depends on*: TASK-004
@@ -102,8 +102,8 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 *Depends on*: TASK-003
 - [ ] `import 'server-only'` as first non-comment line
 - [ ] `get[Feature]ById`, `list[Feature]s`, `create[Feature]Record`, `update[Feature]Record`, `delete[Feature]Record`
-- [ ] Every read: `getSession()` → `assertMembership()` → `eq(table.organizationId, orgId)` in every `where`
-- [ ] `organizationId` required parameter on every write — never optional
+- [ ] Every read: `getSession()` → `assertMembership()` → `eq(table.{{ var.tenancy_column }}, orgId)` in every `where`
+- [ ] `{{ var.tenancy_column }}` required parameter on every write — never optional
 - [ ] ioredis cache: key `[feature]:org:{orgId}:{id}`, TTL 5m
 - [ ] Explicit column selection — no `SELECT *`
 - [ ] Sensitive fields excluded from DTO mapper return
@@ -136,7 +136,7 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 ### TASK-010 — Implement tRPC router `apps/api/src/routers/[feature-name].ts`
 *Depends on*: TASK-006, TASK-008
 - [ ] `orgScopedProcedure` on every procedure
-- [ ] `.input()` + `.output()` schemas from `@delta-global/shared` — never inlined
+- [ ] `.input()` + `.output()` schemas from `{{ var.package_scope }}/shared` — never inlined
 - [ ] `.meta({ name: '[feature].[action]' })` for OTel
 - [ ] Feature flag check (`flagService.isEnabled`) in every procedure
 - [ ] RBAC check (`can[Feature](ctx.member.role, action)`) in every mutation
@@ -167,7 +167,7 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 *Depends on*: TASK-010
 - [ ] `apps/web/app/(app)/[workspace]/[feature-name]/page.tsx` — async RSC, `generateMetadata`, flag guard, `createCaller`
 - [ ] `loading.tsx` — skeleton, no `'use client'`
-- [ ] `error.tsx` — `'use client'`, GlitchTip capture, "Réessayer" button
+- [ ] `error.tsx` — `'use client'`, GlitchTip capture, "{{ var.retry_label }}" button
 - [ ] `await params` before any use (Next.js 15)
 - [ ] No `fetch('/api/...')` — only `createCaller`
 - [ ] `bun run typecheck` passes
@@ -207,7 +207,7 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 **MUST PASS BEFORE PR IS OPENED**
 - [ ] User A on page of org A → data visible
 - [ ] User A on URL of org B → 404
-- [ ] User A calls procedure with org B `organizationId` → 403
+- [ ] User A calls procedure with org B `{{ var.tenancy_column }}` → 403
 - [ ] User A on URL with resource ID from org B → 404
 - [ ] Tests tagged `@critical`
 - [ ] `bun run test:e2e --grep @critical --grep [feature-name]` exits 0

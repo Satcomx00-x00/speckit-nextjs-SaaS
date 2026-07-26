@@ -1,5 +1,5 @@
 ---
-description: Scaffold a Delta-Global App Router route segment. Generates page.tsx (RSC, SDK createCaller, feature-flag guard), layout.tsx, loading.tsx, error.tsx (GlitchTip capture, Réessayer button), and not-found.tsx — wired to BetterAuth, the flag service, and @delta-global/ui conventions.
+description: Scaffold a Delta-Global App Router route segment. Generates page.tsx (RSC, SDK createCaller, feature-flag guard), layout.tsx, loading.tsx, error.tsx (GlitchTip capture, {{ var.retry_label }} button), and not-found.tsx — wired to BetterAuth, the flag service, and {{ var.package_scope }}/ui conventions.
 handoffs:
   - label: Scaffold the DAL
     agent: speckit.scaffold.dal
@@ -71,7 +71,7 @@ import { redirect } from 'next/navigation'
 import type { Metadata } from 'next'
 import { getSession } from '@/lib/auth'
 import { flagService } from '@/lib/flags'
-import { createCaller } from '@delta-global/sdk'
+import { createCaller } from '{{ var.package_scope }}/sdk'
 import { <Feature>ListSkeleton } from '@/components/features/<feature-name>/<Feature>ListSkeleton'
 // import { <Feature>List } from '@/components/features/<feature-name>/<Feature>List'
 
@@ -116,7 +116,7 @@ export default async function <FeatureName>sPage({ params }: Props) {
 // Fetch via SDK server caller — NOT fetch('/api/...'), NOT React Query in RSC.
 
 async function <Feature>DataLayer({ workspaceId }: { workspaceId: string }) {
-  const caller = createCaller({ organizationId: workspaceId })
+  const caller = createCaller({ {{ var.tenancy_column }}: workspaceId })
   const data = await caller.<featureCamel>.list({ limit: 20 })
   // TODO: pass data as initialData prop to the client list component
   // return <<Feature>List initialData={data} workspaceId={workspaceId} />
@@ -127,7 +127,7 @@ async function <Feature>DataLayer({ workspaceId }: { workspaceId: string }) {
 Rules:
 - No `'use client'` — this is a Server Component.
 - `await params` and `await searchParams` — required in Next.js 15.
-- Data fetched via `createCaller` from `@delta-global/sdk` — never `fetch('/api/...')`.
+- Data fetched via `createCaller` from `{{ var.package_scope }}/sdk` — never `fetch('/api/...')`.
 - Feature flag guard redirects before any data fetch.
 - `generateMetadata` always present.
 - `<Suspense>` wraps the async data layer.
@@ -184,7 +184,7 @@ Rules:
 'use client'
 
 import { useEffect } from 'react'
-import { Button } from '@delta-global/ui'
+import { Button } from '{{ var.package_scope }}/ui'
 // import { captureException } from '@/lib/glitchtip' // ← replace with GlitchTip SDK
 
 interface Props {
@@ -205,7 +205,7 @@ export default function <FeatureName>Error({ error, reset }: Props) {
         {error.digest ? `Error ID: ${error.digest}` : 'An unexpected error occurred.'}
       </p>
       <Button type="button" variant="outline" onClick={reset}>
-        Réessayer
+        {{ var.retry_label }}
       </Button>
     </div>
   )
@@ -216,8 +216,8 @@ Rules:
 - `'use client'` required — React error boundary.
 - `role="alert"` on the wrapper for screen-reader announcement.
 - GlitchTip capture in `useEffect` — replace `console.error` before shipping.
-- Button label is "Réessayer" — use `next-intl` translation key in production.
-- `@delta-global/ui` `Button` component, not a raw `<button>`.
+- Button label is "{{ var.retry_label }}" — use `next-intl` translation key in production.
+- `{{ var.package_scope }}/ui` `Button` component, not a raw `<button>`.
 
 ---
 
@@ -226,7 +226,7 @@ Rules:
 ```tsx
 // <ROUTE_ROOT>/not-found.tsx
 import Link from 'next/link'
-import { Button } from '@delta-global/ui'
+import { Button } from '{{ var.package_scope }}/ui'
 
 export default function <FeatureName>NotFound() {
   return (

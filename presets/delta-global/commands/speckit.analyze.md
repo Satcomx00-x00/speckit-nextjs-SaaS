@@ -85,11 +85,11 @@ finding = {
 For every table declared in the Drizzle schema:
 - At least one DAL function queries it → else `HIGH: TABLE_NO_DAL`
 - At least one tRPC procedure references it (directly or via DAL) → else `MEDIUM: TABLE_NO_PROCEDURE`
-- `organizationId` column present AND used in a `where` clause in every DAL query → else `CRITICAL: MISSING_ORG_SCOPE`
+- `{{ var.tenancy_column }}` column present AND used in a `where` clause in every DAL query → else `CRITICAL: MISSING_ORG_SCOPE`
 
 For every DAL function:
 - References an existing Drizzle table → else `CRITICAL: DAL_UNKNOWN_TABLE`
-- `organizationId` is a required parameter (non-optional) → else `CRITICAL: DAL_ORG_OPTIONAL`
+- `{{ var.tenancy_column }}` is a required parameter (non-optional) → else `CRITICAL: DAL_ORG_OPTIONAL`
 - `import "server-only"` is the first non-comment line → else `HIGH: DAL_MISSING_SERVER_ONLY`
 
 #### 2b. Zod schema ↔ Procedure coverage
@@ -97,7 +97,7 @@ For every DAL function:
 For every tRPC procedure in the router:
 - A named input Zod schema exists in `packages/shared` → else `HIGH: PROCEDURE_NO_ZOD_INPUT`
 - A named output Zod schema exists → else `MEDIUM: PROCEDURE_NO_ZOD_OUTPUT`
-- Schema is imported from `@delta-global/shared`, never inlined → else `HIGH: PROCEDURE_INLINE_ZOD`
+- Schema is imported from `{{ var.package_scope }}/shared`, never inlined → else `HIGH: PROCEDURE_INLINE_ZOD`
 
 For every Zod schema in `packages/shared/src/schemas/<feature>.ts`:
 - Referenced by at least one procedure or DAL function → else `MEDIUM: ORPHAN_ZOD_SCHEMA`
@@ -118,7 +118,7 @@ For every action × role entry in the RFC RBAC matrix:
 - Role insufficient → `TRPCError FORBIDDEN` is thrown (not silently ignored) → else `CRITICAL: RBAC_SILENT_PASS`
 
 For every procedure using `orgScopedProcedure`:
-- `organizationId` is extracted from the BetterAuth session, NOT from `input` → else `CRITICAL: ORG_ID_FROM_INPUT`
+- `{{ var.tenancy_column }}` is extracted from the BetterAuth session, NOT from `input` → else `CRITICAL: ORG_ID_FROM_INPUT`
 
 #### 2e. Hard constraint violations
 
@@ -127,8 +127,8 @@ Check each hard constraint defined in the stack. Any violation is `CRITICAL`:
 | Constraint | Detection |
 |---|---|
 | No raw SQL | any `sql\`` template literal in `apps/api` or `packages/db` outside migrations |
-| No analytics-db imports | `@delta-global/analytics-db` imported in `apps/api` or `apps/web` |
-| organizationId on every tenant table | tables in `packages/db/src/schema/<feature>.ts` lacking `organizationId` column |
+| No analytics-db imports | `{{ var.package_scope }}/analytics-db` imported in `apps/api` or `apps/web` |
+| {{ var.tenancy_column }} on every tenant table | tables in `packages/db/src/schema/<feature>.ts` lacking `{{ var.tenancy_column }}` column |
 | tRPC for internal calls | `fetch('/api/...')` calls inside RSC pages or client components (use SDK caller) |
 | Secrets via Infisical | `process.env.*` used directly in app code (outside `env.ts` / `@t3-oss/env-*`) |
 | No relative cross-workspace imports | `../../packages/...` or `../../../apps/...` import paths |

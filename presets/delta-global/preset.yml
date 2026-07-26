@@ -12,6 +12,25 @@ preset:
 requires:
   speckit_version: ">=0.6.0"
 
+# Resolved at install time into the installed copy. Override per project in
+# .specify/preset-variables.yml (scoped under this preset's id or flat).
+variables:
+  package_scope:
+    default: "@delta-global"
+    description: "Workspace package scope used in imports (e.g. @acme)"
+  tenancy_column:
+    default: "organizationId"
+    description: "Tenant key column on every tenant-scoped table (e.g. organizationId, ownerId)"
+  tenancy_column_snake:
+    default: "organization_id"
+    description: "Snake-case DB column name backing the tenant key"
+  tenant_table:
+    default: "organizations"
+    description: "Table the tenant key references (e.g. organizations, users)"
+  retry_label:
+    default: "Réessayer"
+    description: "User-facing retry button label in generated error boundaries"
+
 provides:
   templates:
     - type: "template"

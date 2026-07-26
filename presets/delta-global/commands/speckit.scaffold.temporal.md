@@ -117,7 +117,7 @@ const {
 // ─── Input / Output types ────────────────────────────────────────────────────
 
 export interface <FeatureName>WorkflowInput {
-  organizationId: string
+  {{ var.tenancy_column }}: string
   // TODO: add required input fields
 }
 
@@ -142,7 +142,7 @@ export async function <featureName>Workflow(
   input: <FeatureName>WorkflowInput,
 ): Promise<<FeatureName>WorkflowOutput> {
   const { workflowId } = workflowInfo()
-  log.info('<feature-name> workflow started', { workflowId, organizationId: input.organizationId })
+  log.info('<feature-name> workflow started', { workflowId, {{ var.tenancy_column }}: input.{{ var.tenancy_column }} })
 
   // ── Signal handlers (register before any await) ───────────────────────────
   // let cancelled = false
@@ -154,7 +154,7 @@ export async function <featureName>Workflow(
 
   // ── Step 1 ────────────────────────────────────────────────────────────────
   // status = 'step-1'
-  // const result = await <activityName>({ organizationId: input.organizationId })
+  // const result = await <activityName>({ {{ var.tenancy_column }}: input.{{ var.tenancy_column }} })
 
   // ── Step 2 (conditional) ──────────────────────────────────────────────────
   // if (result.requiresApproval) {
@@ -193,7 +193,7 @@ import { ApplicationFailure } from '@temporalio/common'
 // ─── Input / Output types ─────────────────────────────────────────────────────
 
 export interface <ActivityName>Input {
-  organizationId: string
+  {{ var.tenancy_column }}: string
   // TODO: add activity-specific fields
 }
 
@@ -221,7 +221,7 @@ export async function <activityName>(
     // })
 
     // TODO: implement activity
-    // import db from '@delta-global/db' — drizzle client
+    // import db from '{{ var.package_scope }}/db' — drizzle client
     // const result = await db.insert(someTable).values({ ... }).returning()
 
     return {
@@ -295,13 +295,13 @@ async function runWorkflow(
 
 describe('<FeatureName> workflow', () => {
   it('completes successfully on happy path', async () => {
-    const result = await runWorkflow({ organizationId: 'org-1' })
+    const result = await runWorkflow({ {{ var.tenancy_column }}: 'org-1' })
     expect(result).toBeDefined()
     // TODO: assert specific output fields
   })
 
   it('is idempotent — second execution with same input produces same outcome', async () => {
-    const input = { organizationId: 'org-1' }
+    const input = { {{ var.tenancy_column }}: 'org-1' }
     const [r1, r2] = await Promise.all([
       runWorkflow(input),
       runWorkflow(input),
@@ -313,7 +313,7 @@ describe('<FeatureName> workflow', () => {
   it('handles activity failure with retry', async () => {
     let callCount = 0
     const result = await runWorkflow(
-      { organizationId: 'org-1' },
+      { {{ var.tenancy_column }}: 'org-1' },
       {
         <activityName>: async (input) => {
           callCount++
@@ -329,7 +329,7 @@ describe('<FeatureName> workflow', () => {
   it('fails permanently on non-retryable error', async () => {
     await expect(
       runWorkflow(
-        { organizationId: 'org-1' },
+        { {{ var.tenancy_column }}: 'org-1' },
         {
           <activityName>: async () => {
             const { ApplicationFailure } = await import('@temporalio/common')

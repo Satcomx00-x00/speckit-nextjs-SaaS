@@ -2,6 +2,47 @@
 
 <!-- insert new changelog below this comment -->
 
+## [Unreleased]
+
+### Added
+
+- `/speckit.verify` core command: evidence-based post-implementation
+  verification (EARS criteria probed, flag registered, migrations applied,
+  observability actually emitted, claimed CI gates present in CI config);
+  wired before `ready-for-review` in all three SaaS workflows
+- Gate steps support machine-checkable `check:` shell pre-conditions with
+  `on_check_fail: block | warn`, run before the human prompt (and in CI)
+- Preset variables: `variables:` in `preset.yml`, `{{ var.* }}` placeholders
+  resolved at install time, project overrides via
+  `.specify/preset-variables.yml`; tenancy model/column are now configuration
+- `presets/delta-global`: the former root `commands/` layer as a declared,
+  installable example company preset (13 commands + 2 template overrides)
+- EARS-format acceptance criteria in `spec-template.md` and the `specify`
+  command's generation rules
+- `migration-only` workflow: explicit expand-contract phases, verify step,
+  and a migration-record artifact tracking what ran where with rollback SQL
+- Engine + manifest test suites for the three SaaS workflows, gate checks,
+  and preset variables (`tests/test_saas_workflows.py`,
+  `tests/test_preset_variables.py`)
+
+### Changed
+
+- The three SaaS workflows (`saas-feature`, `hotfix`, `migration-only`) are
+  rewritten to actually pass the engine's validation (shell `run:`, switch
+  `expression:`, sequential quality gates, reject/abort gate semantics) and
+  parameterize every tool command as an input with a default
+- Core `plan-template.md` / `tasks-template.md` genericized for any
+  Next.js/TS SaaS (stack table and paths filled from the constitution)
+- Wheel now bundles `presets/nextjs`, `presets/delta-global`, the three SaaS
+  workflows, and `templates/agent-context.md`; catalogs register them
+- `__SPECKIT_COMMAND_*__` placeholders restored in page templates (fixes 11
+  pre-existing test failures)
+
+### Removed
+
+- Stale root `preset.yml` that duplicated the `nextjs` preset id/version
+  while pointing at divergent Delta-Global command bodies
+
 ## [0.8.11] - 2026-05-15
 
 ### Changed

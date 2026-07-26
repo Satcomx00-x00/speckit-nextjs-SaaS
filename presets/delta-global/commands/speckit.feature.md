@@ -62,7 +62,7 @@ This scaffold walks through 10 phases. Each phase produces one or more files. Af
 
 ### Phase 0 — Contract First (Zod Schemas)
 
-**Goal**: Define the Zod schemas and DTO types in `@delta-global/shared` before any implementation.
+**Goal**: Define the Zod schemas and DTO types in `{{ var.package_scope }}/shared` before any implementation.
 
 **Generate**: `packages/shared/src/schemas/<feature-kebab>.ts`
 
@@ -87,7 +87,7 @@ export type <Feature>ErrorCode = typeof <Feature>ErrorCode[keyof typeof <Feature
 // Precise constraints: no z.any, no z.unknown, no z.record(z.any)
 
 export const Create<Feature>Input = z.object({
-  // organizationId is extracted from the BetterAuth session — NEVER in input
+  // {{ var.tenancy_column }} is extracted from the BetterAuth session — NEVER in input
   // <name>: z.string().min(1).max(255),
   // <field>: z.enum(['draft', 'active', 'archived']),
 })
@@ -113,7 +113,7 @@ export const List<Feature>Input = z.object({
 
 export const <Feature>Dto = z.object({
   id:             z.string().uuid(),
-  organizationId: z.string().uuid(),
+  {{ var.tenancy_column }}: z.string().uuid(),
   // TODO: add public fields
   createdAt:      z.string().datetime(),
   updatedAt:      z.string().datetime(),
@@ -140,7 +140,7 @@ export type <Feature>ListDto     = z.infer<typeof <Feature>ListDto>
 **Checklist**:
 - [ ] Every input field has a precise constraint (`.min`, `.max`, `.uuid()`, `.email()`, `.regex()`, etc.)
 - [ ] No `z.any()`, `z.unknown()`, `z.record(z.any())` — Biome will fail
-- [ ] `organizationId` is absent from input schemas (extracted from session in procedures)
+- [ ] `{{ var.tenancy_column }}` is absent from input schemas (extracted from session in procedures)
 - [ ] DTO schemas omit sensitive fields
 - [ ] Types are inferred — never hand-duplicated
 
@@ -162,9 +162,9 @@ export const <featureSnake> = pgTable(
   '<feature_snake>',
   {
     id:             uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
+    {{ var.tenancy_column }}: uuid('{{ var.tenancy_column_snake }}')
       .notNull()
-      .references(() => organizations.id, { onDelete: 'cascade' }),
+      .references(() => {{ var.tenant_table }}.id, { onDelete: 'cascade' }),
     // TODO: add domain columns
     // name: text('name').notNull(),
     // status: text('status', { enum: ['draft', 'active', 'archived'] }).notNull().default('draft'),
@@ -172,8 +172,8 @@ export const <featureSnake> = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    // Tenant-scoped index: EVERY query must filter by organizationId
-    index('<feature_snake>_org_idx').on(t.organizationId, t.createdAt.desc()),
+    // Tenant-scoped index: EVERY query must filter by {{ var.tenancy_column }}
+    index('<feature_snake>_org_idx').on(t.{{ var.tenancy_column }}, t.createdAt.desc()),
     // TODO: add composite indexes for frequent filter+sort patterns
   ],
 )
@@ -182,8 +182,8 @@ export const <featureSnake> = pgTable(
 
 export const <featureSnake>Relations = relations(<featureSnake>, ({ one }) => ({
   organization: one(organizations, {
-    fields: [<featureSnake>.organizationId],
-    references: [organizations.id],
+    fields: [<featureSnake>.{{ var.tenancy_column }}],
+    references: [{{ var.tenant_table }}.id],
   }),
   // TODO: add other relations
 }))
@@ -196,13 +196,13 @@ export type New<Feature> = typeof <featureSnake>.$inferInsert
 
 **Also update**: `packages/db/src/schema/index.ts` — add the export.
 
-**After writing**: run `bun --filter @delta-global/db drizzle-kit generate` and review the SQL diff.
+**After writing**: run `bun --filter {{ var.package_scope }}/db drizzle-kit generate` and review the SQL diff.
 
 **Checklist**:
 - [ ] `uuid().primaryKey().defaultRandom()` — no serial IDs
-- [ ] `organizationId` FK with `onDelete` decision documented (cascade vs restrict)
+- [ ] `{{ var.tenancy_column }}` FK with `onDelete` decision documented (cascade vs restrict)
 - [ ] Timestamps with `withTimezone: true`
-- [ ] Index on `(organizationId, createdAt desc)` at minimum
+- [ ] Index on `({{ var.tenancy_column }}, createdAt desc)` at minimum
 - [ ] `InferSelectModel` / `InferInsertModel` types exported
 - [ ] `drizzle-kit generate` only — never handwrite SQL
 
@@ -219,11 +219,11 @@ export type New<Feature> = typeof <featureSnake>.$inferInsert
 import 'server-only'
 import { cache } from 'react'
 import { eq, and, desc, lt } from 'drizzle-orm'
-import { db } from '@delta-global/db'
-import { <featureSnake> } from '@delta-global/db/schema'
+import { db } from '{{ var.package_scope }}/db'
+import { <featureSnake> } from '{{ var.package_scope }}/db/schema'
 import { redis } from '@/lib/redis'
 import { getSession, assertMembership } from '@/lib/auth'
-import type { List<Feature>Input } from '@delta-global/shared'
+import type { List<Feature>Input } from '{{ var.package_scope }}/shared'
 
 // ─── Cache keys ───────────────────────────────────────────────────────────────
 // Pattern: <feature>:org:{orgId}:{id}  |  <feature>s:org:{orgId}
@@ -255,11 +255,11 @@ export const get<Feature>ById = cache(async (id: string) => {
   const row = await db.query.<featureSnake>.findFirst({
     where: and(
       eq(<featureSnake>.id, id),
-      eq(<featureSnake>.organizationId, orgId),   // ← tenant scope: always required
+      eq(<featureSnake>.{{ var.tenancy_column }}, orgId),   // ← tenant scope: always required
     ),
     columns: {
       // Explicitly select columns — never SELECT *
-      id: true, organizationId: true, createdAt: true, updatedAt: true,
+      id: true, {{ var.tenancy_column }}: true, createdAt: true, updatedAt: true,
       // TODO: add business columns
     },
   })
@@ -288,13 +288,13 @@ export const list<Feature>s = cache(async (input: List<Feature>Input) => {
 
   const rows = await db.query.<featureSnake>.findMany({
     where: and(
-      eq(<featureSnake>.organizationId, orgId),   // ← tenant scope: always required
+      eq(<featureSnake>.{{ var.tenancy_column }}, orgId),   // ← tenant scope: always required
       input.cursor ? lt(<featureSnake>.createdAt, new Date(input.cursor)) : undefined,
     ),
     orderBy: desc(sortColumn),
     limit: input.limit + 1, // fetch one extra to determine if there is a next page
     columns: {
-      id: true, organizationId: true, createdAt: true, updatedAt: true,
+      id: true, {{ var.tenancy_column }}: true, createdAt: true, updatedAt: true,
       // TODO: add business columns
     },
   })
@@ -318,48 +318,48 @@ export const list<Feature>s = cache(async (input: List<Feature>Input) => {
 /** Insert a new <Feature> and invalidate the list cache. */
 export async function create<Feature>Record(
   data: Omit<New<Feature>, 'id' | 'createdAt' | 'updatedAt'>,
-  organizationId: string,
+  {{ var.tenancy_column }}: string,
 ): Promise<<Feature>> {
   const [row] = await db
     .insert(<featureSnake>)
-    .values({ ...data, organizationId })
+    .values({ ...data, {{ var.tenancy_column }} })
     .returning()
   if (!row) throw new Error('<FEATURE>_INSERT_FAILED')
-  await invalidate<Feature>Cache(organizationId)
+  await invalidate<Feature>Cache({{ var.tenancy_column }})
   return row
 }
 
 /** Update fields on an existing <Feature> and invalidate caches. */
 export async function update<Feature>Record(
   id: string,
-  organizationId: string,
-  data: Partial<Omit<New<Feature>, 'id' | 'organizationId' | 'createdAt' | 'updatedAt'>>,
+  {{ var.tenancy_column }}: string,
+  data: Partial<Omit<New<Feature>, 'id' | '{{ var.tenancy_column }}' | 'createdAt' | 'updatedAt'>>,
 ): Promise<<Feature>> {
   const [row] = await db
     .update(<featureSnake>)
     .set({ ...data, updatedAt: new Date() })
     .where(and(
       eq(<featureSnake>.id, id),
-      eq(<featureSnake>.organizationId, organizationId),  // ← ownership check in query
+      eq(<featureSnake>.{{ var.tenancy_column }}, {{ var.tenancy_column }}),  // ← ownership check in query
     ))
     .returning()
   if (!row) throw new Error('<FEATURE>_NOT_FOUND_OR_FORBIDDEN')
-  await invalidate<Feature>Cache(organizationId, id)
+  await invalidate<Feature>Cache({{ var.tenancy_column }}, id)
   return row
 }
 
 /** Hard-delete a <Feature>. Use soft-delete if the domain requires an audit trail. */
 export async function delete<Feature>Record(
   id: string,
-  organizationId: string,
+  {{ var.tenancy_column }}: string,
 ): Promise<void> {
   await db
     .delete(<featureSnake>)
     .where(and(
       eq(<featureSnake>.id, id),
-      eq(<featureSnake>.organizationId, organizationId),  // ← ownership check in query
+      eq(<featureSnake>.{{ var.tenancy_column }}, {{ var.tenancy_column }}),  // ← ownership check in query
     ))
-  await invalidate<Feature>Cache(organizationId, id)
+  await invalidate<Feature>Cache({{ var.tenancy_column }}, id)
 }
 
 // ─── Cache invalidation ───────────────────────────────────────────────────────
@@ -372,8 +372,8 @@ async function invalidate<Feature>Cache(orgId: string, id?: string) {
 
 **Checklist**:
 - [ ] `import 'server-only'` as the first non-comment line
-- [ ] `organizationId` is an explicit parameter on every write function
-- [ ] Every query filters by `eq(table.organizationId, orgId)` — no cross-tenant leaks
+- [ ] `{{ var.tenancy_column }}` is an explicit parameter on every write function
+- [ ] Every query filters by `eq(table.{{ var.tenancy_column }}, orgId)` — no cross-tenant leaks
 - [ ] Cursor-based pagination only — no `OFFSET`
 - [ ] Explicit column selection — no `SELECT *`
 - [ ] Reads wrapped with `cache()` for intra-request dedup
@@ -395,8 +395,8 @@ async function invalidate<Feature>Cache(orgId: string, id?: string) {
 // No db, auth, redis, Hono, tRPC, Next, headers, cookies, fetch, Date.now, Math.random.
 // Every dependency injected as a parameter.
 
-import type { Create<Feature>Input, Update<Feature>Input } from '@delta-global/shared'
-import type { <Feature>ErrorCode } from '@delta-global/shared'
+import type { Create<Feature>Input, Update<Feature>Input } from '{{ var.package_scope }}/shared'
+import type { <Feature>ErrorCode } from '{{ var.package_scope }}/shared'
 
 // ─── Result type ──────────────────────────────────────────────────────────────
 
@@ -413,7 +413,7 @@ export type Result<T, E extends string = <Feature>ErrorCode> =
 export function buildCreate<Feature>Payload(
   input: Create<Feature>Input,
   opts: { now: Date },
-): Result<Omit<Parameters<typeof create<Feature>Record>[0], 'organizationId'>> {
+): Result<Omit<Parameters<typeof create<Feature>Record>[0], '{{ var.tenancy_column }}'>> {
   // Guard clauses on top — happy path at the bottom
   // if (!input.name.trim()) return { ok: false, error: '<Feature>ErrorCode.INVALID_STATE' }
 
@@ -476,7 +476,7 @@ import {
   List<Feature>Input,
   <Feature>Dto,
   <Feature>ListDto,
-} from '@delta-global/shared'
+} from '{{ var.package_scope }}/shared'
 import {
   get<Feature>ById,
   list<Feature>s,
@@ -498,12 +498,12 @@ export const <featureCamel>Router = router({
     .input(Get<Feature>Input)
     .output(<Feature>Dto)
     .query(async ({ ctx, input }) => {
-      if (!await flagService.isEnabled(FLAG, ctx.organizationId)) {
+      if (!await flagService.isEnabled(FLAG, ctx.{{ var.tenancy_column }})) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Feature not available' })
       }
 
       const row = await get<Feature>ById(input.id)
-      if (!row || row.organizationId !== ctx.organizationId) {
+      if (!row || row.{{ var.tenancy_column }} !== ctx.{{ var.tenancy_column }}) {
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found' })
       }
       // TODO: map DB row to DTO (omit sensitive fields)
@@ -515,7 +515,7 @@ export const <featureCamel>Router = router({
     .input(List<Feature>Input)
     .output(<Feature>ListDto)
     .query(async ({ ctx, input }) => {
-      if (!await flagService.isEnabled(FLAG, ctx.organizationId)) {
+      if (!await flagService.isEnabled(FLAG, ctx.{{ var.tenancy_column }})) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Feature not available' })
       }
       return list<Feature>s(input)
@@ -528,7 +528,7 @@ export const <featureCamel>Router = router({
     .input(Create<Feature>Input)
     .output(<Feature>Dto)
     .mutation(async ({ ctx, input }) => {
-      if (!await flagService.isEnabled(FLAG, ctx.organizationId)) {
+      if (!await flagService.isEnabled(FLAG, ctx.{{ var.tenancy_column }})) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Feature not available' })
       }
 
@@ -551,14 +551,14 @@ export const <featureCamel>Router = router({
       }
 
       // DAL write (includes cache invalidation)
-      const row = await create<Feature>Record(payload.data, ctx.organizationId)
+      const row = await create<Feature>Record(payload.data, ctx.{{ var.tenancy_column }})
 
       // Fire-and-forget side effects (choose one):
-      // await queue.add('<feature>-created', { id: row.id, organizationId: ctx.organizationId })
+      // await queue.add('<feature>-created', { id: row.id, {{ var.tenancy_column }}: ctx.{{ var.tenancy_column }} })
       // await temporalClient.workflow.start(<featureCamel>Workflow, {
       //   workflowId: `<feature>-${row.id}`,
       //   taskQueue:  'default',
-      //   args:       [{ organizationId: ctx.organizationId, id: row.id }],
+      //   args:       [{ {{ var.tenancy_column }}: ctx.{{ var.tenancy_column }}, id: row.id }],
       // })
 
       // TODO: map row to DTO
@@ -570,14 +570,14 @@ export const <featureCamel>Router = router({
     .input(Update<Feature>Input)
     .output(<Feature>Dto)
     .mutation(async ({ ctx, input }) => {
-      if (!await flagService.isEnabled(FLAG, ctx.organizationId)) {
+      if (!await flagService.isEnabled(FLAG, ctx.{{ var.tenancy_column }})) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Feature not available' })
       }
       if (!can<Feature>(ctx.member.role, 'update')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Insufficient role' })
       }
       const { id, ...data } = input
-      const row = await update<Feature>Record(id, ctx.organizationId, data)
+      const row = await update<Feature>Record(id, ctx.{{ var.tenancy_column }}, data)
       return row as <Feature>Dto
     }),
 
@@ -585,13 +585,13 @@ export const <featureCamel>Router = router({
     .meta({ name: '<feature>.delete' })
     .input(Get<Feature>Input)
     .mutation(async ({ ctx, input }) => {
-      if (!await flagService.isEnabled(FLAG, ctx.organizationId)) {
+      if (!await flagService.isEnabled(FLAG, ctx.{{ var.tenancy_column }})) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Feature not available' })
       }
       if (!can<Feature>(ctx.member.role, 'delete')) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'Insufficient role' })
       }
-      await delete<Feature>Record(input.id, ctx.organizationId)
+      await delete<Feature>Record(input.id, ctx.{{ var.tenancy_column }})
     }),
 })
 ```
@@ -599,8 +599,8 @@ export const <featureCamel>Router = router({
 **Wire into appRouter**: add `<featureCamel>: <featureCamel>Router` to `apps/api/src/routers/index.ts`.
 
 **Checklist**:
-- [ ] `orgScopedProcedure` used — `organizationId` from session, never from `input`
-- [ ] `.input()` schema imported from `@delta-global/shared` — never inlined
+- [ ] `orgScopedProcedure` used — `{{ var.tenancy_column }}` from session, never from `input`
+- [ ] `.input()` schema imported from `{{ var.package_scope }}/shared` — never inlined
 - [ ] `.output()` schema for typed SDK contracts
 - [ ] `.meta({ name: '...' })` for OTel spans and structured logs
 - [ ] Feature flag checked in every procedure
@@ -622,7 +622,7 @@ export const <featureCamel>Router = router({
 import { Suspense } from 'react'
 import { notFound, redirect } from 'next/navigation'
 import type { Metadata } from 'next'
-import { createCaller } from '@delta-global/sdk'
+import { createCaller } from '{{ var.package_scope }}/sdk'
 import { getSession } from '@/lib/auth'
 import { flagService } from '@/lib/flags'
 import { <Feature>List } from '@/components/features/<feature-kebab>/<Feature>List'
@@ -662,7 +662,7 @@ export default async function <Feature>sPage({ params }: Props) {
 // Async RSC that fetches data — keep inside Suspense boundary
 async function <Feature>DataLayer({ workspaceId }: { workspaceId: string }) {
   // Fetch via SDK server caller — NOT React Query, NOT fetch('/api/...')
-  const caller = createCaller({ organizationId: workspaceId })
+  const caller = createCaller({ {{ var.tenancy_column }}: workspaceId })
   const data = await caller.<featureCamel>.list({ limit: 20 })
 
   return <<Feature>List initialData={data} workspaceId={workspaceId} />
@@ -687,7 +687,7 @@ export default function Loading() {
 'use client'
 
 import { useEffect } from 'react'
-import { Button } from '@delta-global/ui'
+import { Button } from '{{ var.package_scope }}/ui'
 // import * as Sentry from '@sentry/nextjs' // ← replace with GlitchTip SDK
 
 interface Props {
@@ -706,7 +706,7 @@ export default function <Feature>sError({ error, reset }: Props) {
       <h2 className="text-lg font-semibold">Something went wrong</h2>
       <p className="text-muted-foreground text-sm">{error.digest ?? 'An unexpected error occurred'}</p>
       <Button type="button" variant="outline" onClick={reset}>
-        Réessayer
+        {{ var.retry_label }}
       </Button>
     </div>
   )
@@ -720,7 +720,7 @@ export default function <Feature>sError({ error, reset }: Props) {
 - [ ] `<Suspense>` wraps async data layer
 - [ ] `generateMetadata` present
 - [ ] `loading.tsx` skeleton matches final layout
-- [ ] `error.tsx` captures to GlitchTip + has Réessayer button
+- [ ] `error.tsx` captures to GlitchTip + has {{ var.retry_label }} button
 
 ---
 
@@ -738,8 +738,8 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/trpc/client'
-import { Create<Feature>Input } from '@delta-global/shared'
-import { Button, Input, Form, FormField, FormItem, FormLabel, FormMessage } from '@delta-global/ui'
+import { Create<Feature>Input } from '{{ var.package_scope }}/shared'
+import { Button, Input, Form, FormField, FormItem, FormLabel, FormMessage } from '{{ var.package_scope }}/ui'
 import { toast } from 'sonner'
 
 interface Props {
@@ -817,7 +817,7 @@ export function Create<Feature>Form({ workspaceId, onSuccess }: Props) {
 'use client'
 
 import { api } from '@/lib/trpc/client'
-import type { <Feature>ListDto } from '@delta-global/shared'
+import type { <Feature>ListDto } from '{{ var.package_scope }}/shared'
 
 interface Props {
   workspaceId: string
@@ -859,7 +859,7 @@ export function <Feature>List({ workspaceId, initialData }: Props) {
 
 ```tsx
 // apps/web/components/features/<feature-kebab>/<Feature>ListSkeleton.tsx
-import { Skeleton } from '@delta-global/ui'
+import { Skeleton } from '{{ var.package_scope }}/ui'
 
 export function <Feature>ListSkeleton() {
   return (
@@ -874,7 +874,7 @@ export function <Feature>ListSkeleton() {
 
 **Checklist**:
 - [ ] `'use client'` only on interactive leaves — not on the page
-- [ ] `react-hook-form` + `zodResolver` — schema from `@delta-global/shared`
+- [ ] `react-hook-form` + `zodResolver` — schema from `{{ var.package_scope }}/shared`
 - [ ] tRPC `useMutation` (not `fetch` or Server Actions)
 - [ ] `queryClient.invalidateQueries` on success with correct queryKey
 - [ ] Submit disabled while `mutation.isPending` — no double-submit
@@ -904,7 +904,7 @@ export const <featureCamel>Queue = new Queue('<feature-kebab>', { connection: re
 export const <featureCamel>Worker = new Worker(
   '<feature-kebab>',
   async (job) => {
-    const { id, organizationId } = job.data
+    const { id, {{ var.tenancy_column }} } = job.data
 
     switch (job.name) {
       case '<feature>-created': {
@@ -949,7 +949,7 @@ Observability checklist (integrate into existing files):
 apps/api/src/routers/<feature-kebab>.ts
   [ ] .meta({ name: '<feature>.<action>' }) on every procedure
   [ ] OTel span attributes: org.id, user.id, procedure.name (set via trpc middleware)
-  [ ] Structured log fields: organizationId, userId, correlationId, durationMs
+  [ ] Structured log fields: {{ var.tenancy_column }}, userId, correlationId, durationMs
 
 apps/web/app/(app)/[workspace]/<feature-kebab>/error.tsx
   [ ] GlitchTip / Sentry captureException in useEffect
@@ -960,7 +960,7 @@ Analytics events (ClickHouse only — never Postgres)
   [ ] <feature>.deleted   { orgId, userId, <feature>Id }
   [ ] <feature>.viewed    { orgId, userId }
   [ ] Event names follow feature.action convention
-  [ ] NO @delta-global/analytics-db imports in apps/api or apps/web
+  [ ] NO {{ var.package_scope }}/analytics-db imports in apps/api or apps/web
 
 Grafana / Mimir
   [ ] Volume counter per procedure per org
@@ -1122,7 +1122,7 @@ test('@critical user A on resource from org B gets 404', async ({ page }) => {
 Auth
   [ ] Session checked in orgScopedProcedure middleware (BetterAuth)
   [ ] Membership checked in DAL before every query
-  [ ] organizationId extracted from session — never from procedure input
+  [ ] {{ var.tenancy_column }} extracted from session — never from procedure input
 
 Input
   [ ] Zod schema attached via .input() — no inline schemas
@@ -1133,7 +1133,7 @@ Rate limiting
   [ ] ioredis sliding window on userId per procedure
 
 Data
-  [ ] Every query filters by eq(table.organizationId, orgId)
+  [ ] Every query filters by eq(table.{{ var.tenancy_column }}, orgId)
   [ ] No raw SQL (drizzle-kit generate only)
   [ ] No SELECT * — explicit column selection
   [ ] Sensitive fields absent from DTO schemas
@@ -1160,8 +1160,8 @@ After generating all files, verify:
 
 1. No `'use client'` in `page.tsx` — all page files are Server Components
 2. No `import { db }` in components or pages — every DB query routes through the DAL
-3. No `fetch('/api/...')` inside RSC pages — use `createCaller` from `@delta-global/sdk`
-4. No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+3. No `fetch('/api/...')` inside RSC pages — use `createCaller` from `{{ var.package_scope }}/sdk`
+4. No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
 5. No raw SQL (`sql\`` template literals outside migration files)
 6. No `import "server-only"` missing from DAL files
 7. All imports resolve: `bun run typecheck`

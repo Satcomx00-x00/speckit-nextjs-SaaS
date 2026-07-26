@@ -343,8 +343,22 @@ steps:
     run: "{{ inputs.secretscan_cmd }}"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 8 — Migration record + PR
+  # PHASE 8 — Verify + migration record + PR
   # ──────────────────────────────────────────────────────────────────
+  - id: verify
+    command: speckit.verify
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Verify the migration for "{{ inputs.affected_tables }}" with evidence:
+        - Migration file exists in {{ inputs.migrations_dir }} and applied
+          cleanly to the local database (re-run apply, record output)
+        - Schema shape matches the scope (probe the local DB, not the ORM file)
+        - For backfill: dry-run executed, consistency check query recorded
+        - Rollback SQL from the scope actually parses/runs against a throwaway
+          database, or is explicitly marked IRREVERSIBLE with sign-off
+        Write verify-report.md in the migration's spec directory.
+
   - id: migration-record
     type: prompt
     integration: "{{ inputs.integration }}"
