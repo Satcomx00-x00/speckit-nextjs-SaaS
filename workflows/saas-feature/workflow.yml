@@ -142,6 +142,9 @@ steps:
         Feature: {{ inputs.feature_name }}
         Description: {{ inputs.feature_description }}
 
+        Run the full intake interview with the user before writing the scope
+        (skip automatically if no user is available in this run).
+
         Produce a complete product scope:
         - User story (As [role] / I want [action] / So that [benefit])
         - Acceptance criteria in EARS syntax (WHEN/WHILE/IF-THEN/SHALL), binary yes/no
