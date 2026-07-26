@@ -77,11 +77,24 @@ Hard rules:
    output (log line, span export, event row). Planned-but-absent
    instrumentation is FAIL, not a note.
 
-8. **Rollback thresholds**: Verify each threshold in the spec maps to a
+8. **Service Interaction Map**: Cross-check the plan's Service Interaction
+   Map against the implementation diff, in both directions:
+   - Every "yes" row has actual call sites in the code (a declared cache
+     write, worker enqueue, or external API call that was never implemented
+     is FAIL — the plan promised it);
+   - Every service the diff touches (imports of the DB/cache/queue/workflow
+     clients, external API SDKs, storage, realtime channels) appears as a
+     "yes" row — an undeclared interaction is `MAP_DRIFT` and FAIL, not a
+     note;
+   - Every external-API call site enforces the declared timeout and retry
+     budget (grep the client configuration — a bare call with no timeout
+     fails the row).
+
+9. **Rollback thresholds**: Verify each threshold in the spec maps to a
    deployed/committed alert rule (file in the repo or IaC reference). Report
    `THRESHOLD_UNWIRED` for each one that is prose-only.
 
-9. **Write `FEATURE_DIR/verify-report.md`**:
+10. **Write `FEATURE_DIR/verify-report.md`**:
 
    ```markdown
    # Verify Report: [feature] — [date]
@@ -92,7 +105,7 @@ Hard rules:
    | ID | Criterion | Probe | Observed | Verdict |
    |----|-----------|-------|----------|---------|
 
-   ## Flag / Migration / Gates / Observability / Rollback wiring
+   ## Flag / Migration / Gates / Observability / Interaction map / Rollback wiring
    [one short evidenced subsection each]
 
    ## Unverifiable
@@ -102,7 +115,7 @@ Hard rules:
    [every FAIL and UNVERIFIABLE as an actionable item]
    ```
 
-10. **Verdict**: Print the overall verdict and the failing table rows. Exit
+11. **Verdict**: Print the overall verdict and the failing table rows. Exit
     stance: FAIL means the feature is **not ready for review** — say exactly
     that, and list the follow-ups. Do not soften it.
 

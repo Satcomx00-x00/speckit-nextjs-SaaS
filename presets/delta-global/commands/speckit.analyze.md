@@ -151,6 +151,14 @@ For every field in a Drizzle table:
 - Corresponding field in the output Zod DTO schema uses a compatible type → else `HIGH: TYPE_MISMATCH`
 - Sensitive fields (`passwordHash`, `token`, `secret`, `apiKey`) are absent from DTO schemas → else `CRITICAL: SENSITIVE_FIELD_IN_DTO`
 
+#### 2h. Service Interaction Map ↔ implementation
+
+Read the plan's Service Interaction Map (§18). Then scan the feature's implementation files for service touchpoints (Redis/ioredis imports, BullMQ `add`/worker registrations, Temporal client calls, ClickHouse event emission, external API SDK imports and `fetch` to external hosts, storage clients, SSE/realtime channels):
+- Service touched in code but marked "no" or absent from the map → `HIGH: MAP_DRIFT_UNDECLARED`
+- Service marked "yes" in the map with zero call sites in the implementation → `MEDIUM: MAP_DRIFT_UNIMPLEMENTED`
+- External API call site with no timeout or retry configuration where the map declares one → `HIGH: EXTERNAL_CALL_UNGUARDED`
+- Map row left blank (no yes/no verdict) → `MEDIUM: MAP_ROW_BLANK`
+
 ---
 
 ### 3. Produce the drift report

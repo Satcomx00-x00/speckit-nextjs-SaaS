@@ -74,6 +74,33 @@ apps/web/
 
 ---
 
+## Service Interaction Map
+
+> **Mandatory sweep.** One row per platform service with an explicit verdict.
+> "Not touched" requires a reason; a blank row is an incomplete RFC.
+
+| Service | Touched? | Interaction | Changes needed | If this service is down/slow |
+|---|---|---|---|---|
+| Web (`apps/web`, Next.js) | yes/no | [render / mutate] | [routes, components] | [degraded UX] |
+| API (`apps/api`, Hono+tRPC) | yes/no | [new/modified procedures] | [routers] | [error contract] |
+| Postgres (`packages/db`) | yes/no | [read / write / migrate] | [tables, indexes] | [failure behavior] |
+| Redis (ioredis) | yes/no | [cache / rate-limit / invalidate] | [keys, TTLs — must match §8] | [fallback to DB? stampede?] |
+| BullMQ workers | yes/no | [enqueue / consume] | [jobs] | [retry, DLQ, user impact] |
+| Temporal (`packages/temporal-workflows`) | yes/no | [start / signal / schedule] | [workflows, activities] | [replay/backlog behavior] |
+| ClickHouse (analytics) | yes/no | [emit events] | [event names] | [fire-and-forget — never blocks] |
+| External APIs (LLM, email, payment, …) | yes/no | [call, per provider] | [client, env.ts, Infisical] | **timeout / retry / fallback / cost cap — required** |
+| BetterAuth / session | yes/no | [role checks, org scope] | [guards] | [lockout behavior] |
+| Object storage | yes/no | [upload / serve] | [buckets, limits] | [failure behavior] |
+
+Rules:
+- Every "yes" row must be reflected in the numbered sections below and in
+  §11 Testing Plan — an interaction without a failure-mode test is
+  undeclared risk.
+- Every external-API row must name timeout, retry budget, fallback, and
+  marginal cost.
+
+---
+
 ## 1. Drizzle Schema
 
 **Package**: `packages/db/src/schema/[feature-name].ts`

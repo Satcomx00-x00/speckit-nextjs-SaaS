@@ -67,6 +67,37 @@ and the installed preset — never invent a technology the project does not use.
 
 ---
 
+## Service Interaction Map
+
+> **Mandatory sweep.** One row per service in the Stack Reference — plus any
+> external API — with an explicit verdict. "Not touched" requires a reason;
+> a blank row is an incomplete plan, and `verify` will flag interactions in
+> code that were never declared here (and vice versa).
+
+| Service | Touched? | Interaction | Changes needed | If this service is down/slow |
+|---|---|---|---|---|
+| Frontend (web app) | yes/no | [render / mutate / subscribe] | [components, routes] | [degraded UX behavior] |
+| API surface | yes/no | [new endpoints / modified] | [routers, actions] | [error contract] |
+| Database | yes/no | [read / write / migrate] | [tables, indexes] | [failure behavior] |
+| Cache | yes/no | [read / write / invalidate] | [keys, TTLs — must match §8] | [fallback to DB? stampede risk?] |
+| Background jobs / workers | yes/no | [enqueue / consume / schedule] | [jobs, workflows] | [retry policy, DLQ, user impact] |
+| External APIs (LLM, email, payment, …) | yes/no | [call, per provider] | [client, env vars, secrets] | **timeout / retry / fallback / cost cap — required** |
+| Auth / session | yes/no | [role checks, new scopes] | [guards] | [lockout behavior] |
+| Realtime (SSE / websockets / push) | yes/no | [emit / subscribe] | [channels, events] | [reconnect / missed-event behavior] |
+| Analytics / events | yes/no | [emit] | [event names] | [fire-and-forget — never blocks] |
+| File / object storage | yes/no | [upload / serve] | [buckets, limits] | [failure behavior] |
+
+Rules:
+- Every "yes" row must be reflected in the numbered sections below (schema,
+  API, cache, jobs) and in the Testing Plan — an interaction without a test
+  for its failure mode is undeclared risk.
+- Every external-API row must name its timeout, retry budget, fallback
+  behavior, and marginal cost — "we call OpenAI" is not a plan.
+- Delete rows for services this project does not have; never leave a row
+  ambiguous.
+
+---
+
 ## 1. Data Schema
 
 **Location**: [db package]/schema/[feature-name].ts

@@ -299,6 +299,24 @@ List any decisions to make before implementation starts:
 
 Rollback threshold: revert flag if error rate > <N>% over 15m OR p95 > <Nms>.
 
+## 18. Service Interaction Map
+
+> Mandatory sweep — one row per platform service with an explicit verdict.
+> "Not touched" requires a one-line reason; no blank rows.
+
+| Service | Touched? | Interaction | Changes needed | If down/slow |
+|---|---|---|---|---|
+| Web (Next.js) | yes/no | <render/mutate> | <routes, components> | <degraded UX> |
+| API (Hono+tRPC) | yes/no | <procedures> | <routers> | <error contract> |
+| Postgres | yes/no | <read/write/migrate> | <tables> | <failure behavior> |
+| Redis | yes/no | <cache/rate-limit> | <keys — must match §7> | <fallback? stampede?> |
+| BullMQ workers | yes/no | <enqueue/consume> | <jobs> | <retry, DLQ> |
+| Temporal | yes/no | <start/signal/schedule> | <workflows> | <backlog behavior> |
+| ClickHouse | yes/no | <emit events — must match §13> | <event names> | <never blocks> |
+| External APIs (LLM/email/payment/...) | yes/no | <call per provider> | <client, env.ts, Infisical> | **timeout/retry/fallback/cost — required** |
+| BetterAuth | yes/no | <role/org checks> | <guards> | <lockout behavior> |
+| Object storage | yes/no | <upload/serve> | <buckets> | <failure behavior> |
+
 ```
 
 ---
@@ -311,7 +329,8 @@ After producing the plan:
 2. Verify every cache key in §7 has a corresponding invalidation site listed.
 3. Verify every analytics event in §13 routes to ClickHouse — never Postgres.
 4. Verify the feature flag in §6 is listed with a kill-switch < 5s.
-5. If any hard constraint is violated (raw SQL, analytics-db import, orgId from input), flag it as CRITICAL before outputting the plan.
+5. Verify the Service Interaction Map (§18) has an explicit verdict for every service, every "yes" row is reflected in §1-§15 (including a failure-mode test in §15), and every external-API row names timeout / retry / fallback / cost. A blank row blocks the plan.
+6. If any hard constraint is violated (raw SQL, analytics-db import, orgId from input), flag it as CRITICAL before outputting the plan.
 
 After completing these checks, offer:
 
