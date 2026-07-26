@@ -7,7 +7,7 @@
 **Spec**: [link to spec.md]
 **RFC PR**: [link — must be merged before implementation PR is opened]
 
-**Note**: This template is filled in by the `speckit.plan` command. Stack rows
+**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command. Stack rows
 and paths come from the project constitution (`.specify/memory/constitution.md`)
 and the installed preset — never invent a technology the project does not use.
 
@@ -21,8 +21,8 @@ and the installed preset — never invent a technology the project does not use.
 
 ## Stack Reference
 
-> Fill from the constitution / `speckit.constitution.scan` output. Delete rows
-> that do not apply to this project.
+> Fill from the constitution / repo scan output. Delete rows that do not
+> apply to this project.
 
 | Layer | Technology | Package / Path |
 |---|---|---|
@@ -191,7 +191,7 @@ mutation must not evict a cache shared by all users/tenants.
 
 ## 10. Observability Plan
 
-> Every row here must be VERIFIABLE after implement — `speckit.verify` will
+> Every row here must be VERIFIABLE after implement — `__SPECKIT_COMMAND_VERIFY__` will
 > check that these signals are actually emitted, not just planned.
 
 | Signal | Attribute / name | Tool |

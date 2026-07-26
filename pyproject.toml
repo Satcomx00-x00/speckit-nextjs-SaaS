@@ -36,14 +36,20 @@ packages = ["src/specify_cli"]
 "templates/vscode-settings.json" = "specify_cli/core_pack/templates/vscode-settings.json"
 # Command templates
 "templates/commands" = "specify_cli/core_pack/commands"
+"templates/agent-context.md" = "specify_cli/core_pack/templates/agent-context.md"
 "scripts/bash" = "specify_cli/core_pack/scripts/bash"
 "scripts/powershell" = "specify_cli/core_pack/scripts/powershell"
 # Bundled extensions (installable via `specify extension add <name>`)
 "extensions/git" = "specify_cli/core_pack/extensions/git"
 # Bundled workflows (auto-installed during `specify init`)
 "workflows/speckit" = "specify_cli/core_pack/workflows/speckit"
+"workflows/saas-feature" = "specify_cli/core_pack/workflows/saas-feature"
+"workflows/hotfix" = "specify_cli/core_pack/workflows/hotfix"
+"workflows/migration-only" = "specify_cli/core_pack/workflows/migration-only"
 # Bundled presets (installable via `specify preset add <name>` or `specify init --preset <name>`)
 "presets/lean" = "specify_cli/core_pack/presets/lean"
+"presets/nextjs" = "specify_cli/core_pack/presets/nextjs"
+"presets/delta-global" = "specify_cli/core_pack/presets/delta-global"
 
 [project.optional-dependencies]
 test = [

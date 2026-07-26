@@ -124,8 +124,18 @@ Given that feature description, do this:
        - Prioritize clarifications by impact: scope > security/privacy > user experience > technical details
     4. Fill User Scenarios & Testing section
        If no clear user flow: ERROR "Cannot determine user scenarios"
+       Write every acceptance criterion in EARS syntax:
+         - Event-driven:  WHEN <trigger>, THE SYSTEM SHALL <response>
+         - State-driven:  WHILE <state>, THE SYSTEM SHALL <response>
+         - Unwanted:      IF <failure/abuse case>, THEN THE SYSTEM SHALL <response>
+         - Optional:      WHERE <feature/flag is present>, THE SYSTEM SHALL <response>
+         - Ubiquitous:    THE SYSTEM SHALL <response>
+       Every criterion names an observable system response. A criterion that
+       fits no EARS pattern is not yet testable — rewrite it or move it to
+       Open Questions. Always include at least one Unwanted (IF/THEN)
+       criterion per story — failure behavior is part of the story.
     5. Generate Functional Requirements
-       Each requirement must be testable
+       Each requirement must be testable — use the same EARS patterns
        Use reasonable defaults for unspecified details (document assumptions in Assumptions section)
     6. Define Success Criteria
        Create measurable, technology-agnostic outcomes
@@ -158,6 +168,8 @@ Given that feature description, do this:
       
       - [ ] No [NEEDS CLARIFICATION] markers remain
       - [ ] Requirements are testable and unambiguous
+      - [ ] Acceptance criteria use EARS syntax (WHEN/WHILE/IF-THEN/WHERE/SHALL)
+      - [ ] Every user story has at least one failure-case (IF/THEN) criterion
       - [ ] Success criteria are measurable
       - [ ] Success criteria are technology-agnostic (no implementation details)
       - [ ] All acceptance scenarios are defined

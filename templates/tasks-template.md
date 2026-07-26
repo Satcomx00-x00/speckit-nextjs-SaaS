@@ -12,7 +12,7 @@ description: "Task list template for SaaS feature implementation"
 
 **Prerequisites**: plan.md (required), spec.md (required for acceptance criteria)
 
-**Note**: Tasks below are SAMPLE TASKS. The `speckit.tasks` command replaces them with
+**Note**: Tasks below are SAMPLE TASKS. The `__SPECKIT_COMMAND_TASKS__` command replaces them with
 actual tasks derived from the plan and spec. Do not keep sample tasks in the generated file.
 
 **Organization**: Tasks are grouped by layer in dependency order, not by user story.
@@ -52,7 +52,7 @@ The `@critical` tenant-isolation E2E tests MUST pass before the PR is opened.
 <!--
   ============================================================================
   IMPORTANT: The tasks below are SAMPLE TASKS for illustration only.
-  The speckit.tasks command MUST replace these with actual tasks derived from:
+  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks derived from:
   - The feature plan (plan.md)
   - The feature spec (spec.md)
   DO NOT keep these sample tasks in the generated tasks.md file.

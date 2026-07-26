@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from typing import Any
 
 from specify_cli.workflows.base import StepBase, StepContext, StepResult, StepStatus
 from specify_cli.workflows.expressions import evaluate_expression
+
+CHECK_TIMEOUT_SECONDS = 300
 
 
 class GateStep(StepBase):
@@ -16,6 +19,12 @@ class GateStep(StepBase):
     an option (e.g. approve / reject).  Falls back to ``PAUSED`` when
     stdin is not a TTY (CI, piped input) so the run can be resumed
     later with ``specify workflow resume``.
+
+    An optional ``check:`` shell command runs BEFORE the human is
+    prompted.  A non-zero exit blocks the gate (``on_check_fail:
+    block``, the default) so approval cannot even be offered while the
+    machine-verifiable pre-condition is unmet — or downgrades to a
+    warning shown alongside the prompt (``on_check_fail: warn``).
 
     The user's choice is stored in ``output.choice``.  ``on_reject``
     controls abort / skip behaviour.
@@ -43,6 +52,34 @@ class GateStep(StepBase):
             "choice": None,
         }
 
+        # Machine-verifiable pre-condition: runs before the human sees
+        # the gate, in CI and interactive runs alike.
+        check_cmd = config.get("check")
+        if check_cmd:
+            if isinstance(check_cmd, str) and "{{" in check_cmd:
+                check_cmd = evaluate_expression(check_cmd, context)
+            check_cmd = str(check_cmd)
+            on_check_fail = config.get("on_check_fail", "block")
+            check_result = self._run_check(check_cmd)
+            output["check"] = check_result
+            if check_result["exit_code"] != 0:
+                if on_check_fail == "block":
+                    return StepResult(
+                        status=StepStatus.FAILED,
+                        output=output,
+                        error=(
+                            f"Gate {config.get('id', '?')!r} pre-condition failed "
+                            f"(exit {check_result['exit_code']}): {check_cmd}"
+                        ),
+                    )
+                # on_check_fail == "warn": surface it, let the human decide
+                print(
+                    f"  ⚠ Gate pre-condition failed (exit "
+                    f"{check_result['exit_code']}): {check_cmd}"
+                )
+                if check_result["output_tail"]:
+                    print(f"    {check_result['output_tail']}")
+
         # Non-interactive: pause for later resume
         if not sys.stdin.isatty():
             return StepResult(status=StepStatus.PAUSED, output=output)
@@ -66,6 +103,33 @@ class GateStep(StepBase):
             return StepResult(status=StepStatus.COMPLETED, output=output)
 
         return StepResult(status=StepStatus.COMPLETED, output=output)
+
+    @staticmethod
+    def _run_check(check_cmd: str) -> dict[str, Any]:
+        """Run the gate's pre-condition shell command, capturing a short tail."""
+        try:
+            proc = subprocess.run(
+                check_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=CHECK_TIMEOUT_SECONDS,
+            )
+            combined = (proc.stdout or "") + (proc.stderr or "")
+            tail = combined.strip().splitlines()[-5:]
+            return {
+                "run": check_cmd,
+                "exit_code": proc.returncode,
+                "output_tail": "\n    ".join(tail),
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "run": check_cmd,
+                "exit_code": -1,
+                "output_tail": f"timed out after {CHECK_TIMEOUT_SECONDS}s",
+            }
+        except Exception as exc:  # noqa: BLE001 — report, don't crash the gate
+            return {"run": check_cmd, "exit_code": -1, "output_tail": str(exc)}
 
     @staticmethod
     def _prompt(message: str, options: list[str]) -> str:
@@ -118,4 +182,16 @@ class GateStep(StepBase):
                     f"Gate step {config.get('id', '?')!r}: on_reject={on_reject!r} "
                     f"but options has no 'reject' or 'abort' choice."
                 )
+        check_cmd = config.get("check")
+        if check_cmd is not None and not isinstance(check_cmd, str):
+            errors.append(
+                f"Gate step {config.get('id', '?')!r}: 'check' must be a string "
+                f"shell command."
+            )
+        on_check_fail = config.get("on_check_fail", "block")
+        if on_check_fail not in ("block", "warn"):
+            errors.append(
+                f"Gate step {config.get('id', '?')!r}: 'on_check_fail' must be "
+                f"'block' or 'warn'."
+            )
         return errors

@@ -1,43 +1,62 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-05-25T00:00:00Z",
-  "catalog_url": "https://raw.githubusercontent.com/github/spec-kit/main/workflows/catalog.json",
+  "updated_at": "2026-07-26T00:00:00Z",
+  "catalog_url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/catalog.json",
   "workflows": {
     "speckit": {
       "id": "speckit",
       "name": "Full SDD Cycle",
-      "description": "Runs specify \u2192 plan \u2192 tasks \u2192 implement with review gates",
+      "description": "Runs specify → plan → tasks → implement with review gates",
       "author": "GitHub",
       "version": "1.0.0",
       "url": "https://raw.githubusercontent.com/github/spec-kit/main/workflows/speckit/workflow.yml",
-      "tags": ["sdd", "full-cycle"]
+      "tags": [
+        "sdd",
+        "full-cycle"
+      ]
     },
     "saas-feature": {
       "id": "saas-feature",
       "name": "SaaS Feature Delivery Cycle",
-      "description": "Production-grade feature delivery: scope → RFC → schema → DAL → services → tRPC → UI → E2E → quality gates → progressive rollout → observability",
+      "description": "Production-grade feature delivery: scope → RFC → schema → DAL → services → API → UI → E2E → quality gates → verify → progressive rollout → observability. Tool commands are inputs — adapts to any Next.js/TS SaaS.",
       "author": "satcom",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/saas-feature/workflow.yml",
-      "tags": ["saas", "multi-tenant", "full-cycle", "bun", "trpc", "drizzle", "temporal", "argocd"]
+      "tags": [
+        "saas",
+        "multi-tenant",
+        "full-cycle",
+        "nextjs",
+        "verify"
+      ]
     },
     "hotfix": {
       "id": "hotfix",
       "name": "Hotfix Delivery",
-      "description": "Fast-path bug fix: scope → implement → regression test → quality gates → staging → prod with mandatory gate. Skips RFC and feature-flag ceremony.",
+      "description": "Fast-path bug fix: scope → implement → regression test → quality gates → verify → staging → prod with mandatory gate and blameless postmortem. Skips RFC and feature-flag ceremony.",
       "author": "satcom",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/hotfix/workflow.yml",
-      "tags": ["hotfix", "bugfix", "fast-path", "bun", "trpc", "drizzle", "argocd"]
+      "tags": [
+        "hotfix",
+        "bugfix",
+        "fast-path",
+        "postmortem"
+      ]
     },
     "migration-only": {
       "id": "migration-only",
       "name": "DB Migration Delivery",
-      "description": "Safe path for schema-only changes: scope → SQL review gate → apply local → quality gates → staging verify → prod-gate (DEPLOY confirm) → post-deploy verify. Supports additive, destructive, backfill, and index migration types.",
+      "description": "Safe path for schema-only changes with explicit expand-contract phases: scope → SQL review gate → apply local → quality gates → migration record → staging verify → prod-gate (DEPLOY confirm) → post-deploy verify.",
       "author": "satcom",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/migration-only/workflow.yml",
-      "tags": ["migration", "database", "schema", "drizzle", "cnpg", "argocd"]
+      "tags": [
+        "migration",
+        "database",
+        "schema",
+        "expand-contract"
+      ]
     }
   }
 }
