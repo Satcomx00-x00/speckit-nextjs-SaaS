@@ -1,5 +1,5 @@
 ---
-description: Scaffold a Delta-Global DAL module. Generates apps/api/src/dal/<feature>.ts with import "server-only", BetterAuth session check, organizationId tenant-scoping on every query, ioredis caching, Result<T,E> envelope, and Drizzle stubs — all compliant with the stack conventions.
+description: Scaffold a Delta-Global DAL module. Generates apps/api/src/dal/<feature>.ts with import "server-only", BetterAuth session check, {{ var.tenancy_column }} tenant-scoping on every query, ioredis caching, Result<T,E> envelope, and Drizzle stubs — all compliant with the stack conventions.
 handoffs:
   - label: Scaffold the tRPC router
     agent: speckit.scaffold.route
@@ -9,7 +9,7 @@ handoffs:
     prompt: Generate implementation tasks for the feature that uses this DAL.
   - label: Analyze consistency
     agent: speckit.analyze
-    prompt: Cross-check the DAL against the RFC for organizationId scoping, cache invalidation, and hard constraint compliance.
+    prompt: Cross-check the DAL against the RFC for {{ var.tenancy_column }} scoping, cache invalidation, and hard constraint compliance.
 ---
 
 ## User Input
@@ -74,11 +74,11 @@ If neither exists, add a `// TODO` stub and continue.
 import 'server-only'
 import { cache } from 'react'
 import { eq, and, desc, lt } from 'drizzle-orm'
-import { db } from '@delta-global/db'
-import { <featureSnake> } from '@delta-global/db/schema'
+import { db } from '{{ var.package_scope }}/db'
+import { <featureSnake> } from '{{ var.package_scope }}/db/schema'
 import { redis } from '@/lib/redis'
 import { getSession, assertMembership } from '@/lib/auth'
-import type { List<Feature>Input } from '@delta-global/shared'
+import type { List<Feature>Input } from '{{ var.package_scope }}/shared'
 
 // ─── Cache keys ────────────────────────────────────────────────────────────────
 // Pattern enforced by stack: <feature>:org:{orgId}:{id}
@@ -112,13 +112,13 @@ export const get<Feature>ById = cache(async (id: string): Promise<Result<<Featur
   const row = await db.query.<featureSnake>.findFirst({
     where: and(
       eq(<featureSnake>.id, id),
-      eq(<featureSnake>.organizationId, orgId), // ← tenant scope: always required
+      eq(<featureSnake>.{{ var.tenancy_column }}, orgId), // ← tenant scope: always required
     ),
     columns: {
       // Explicit column selection — never SELECT *
       // Exclude sensitive fields: tokens, hashes, secrets
       id: true,
-      organizationId: true,
+      {{ var.tenancy_column }}: true,
       createdAt: true,
       updatedAt: true,
       // TODO: add business columns
@@ -154,14 +154,14 @@ export const list<Feature>s = cache(async (input: List<Feature>Input): Promise<R
 
   const rows = await db.query.<featureSnake>.findMany({
     where: and(
-      eq(<featureSnake>.organizationId, orgId), // ← tenant scope: always required
+      eq(<featureSnake>.{{ var.tenancy_column }}, orgId), // ← tenant scope: always required
       input.cursor ? lt(<featureSnake>.createdAt, new Date(input.cursor)) : undefined,
     ),
     orderBy: desc(sortColumn),
     limit: input.limit + 1, // +1 to detect if there is a next page
     columns: {
       id: true,
-      organizationId: true,
+      {{ var.tenancy_column }}: true,
       createdAt: true,
       updatedAt: true,
       // TODO: add business columns
@@ -186,19 +186,19 @@ export const list<Feature>s = cache(async (input: List<Feature>Input): Promise<R
 // ─── Writes ────────────────────────────────────────────────────────────────────
 
 /**
- * Insert a new <Feature>, scoped to the given organizationId.
- * organizationId is always passed explicitly — never from user input.
+ * Insert a new <Feature>, scoped to the given {{ var.tenancy_column }}.
+ * {{ var.tenancy_column }} is always passed explicitly — never from user input.
  */
 export async function create<Feature>Record(
   data: Omit<New<Feature>, 'id' | 'createdAt' | 'updatedAt'>,
-  organizationId: string,
+  {{ var.tenancy_column }}: string,
 ): Promise<Result<<Feature>DTO>> {
   const [row] = await db
     .insert(<featureSnake>)
-    .values({ ...data, organizationId })
+    .values({ ...data, {{ var.tenancy_column }} })
     .returning()
   if (!row) return { ok: false, error: '<FEATURE>_INSERT_FAILED' }
-  await invalidate<Feature>Cache(organizationId)
+  await invalidate<Feature>Cache({{ var.tenancy_column }})
   return { ok: true, data: to<Feature>DTO(row) }
 }
 
@@ -208,8 +208,8 @@ export async function create<Feature>Record(
  */
 export async function update<Feature>Record(
   id: string,
-  organizationId: string,
-  data: Partial<Omit<New<Feature>, 'id' | 'organizationId' | 'createdAt' | 'updatedAt'>>,
+  {{ var.tenancy_column }}: string,
+  data: Partial<Omit<New<Feature>, 'id' | '{{ var.tenancy_column }}' | 'createdAt' | 'updatedAt'>>,
 ): Promise<Result<<Feature>DTO>> {
   const [row] = await db
     .update(<featureSnake>)
@@ -217,12 +217,12 @@ export async function update<Feature>Record(
     .where(
       and(
         eq(<featureSnake>.id, id),
-        eq(<featureSnake>.organizationId, organizationId), // ← ownership in query
+        eq(<featureSnake>.{{ var.tenancy_column }}, {{ var.tenancy_column }}), // ← ownership in query
       ),
     )
     .returning()
   if (!row) return { ok: false, error: '<FEATURE>_NOT_FOUND' }
-  await invalidate<Feature>Cache(organizationId, id)
+  await invalidate<Feature>Cache({{ var.tenancy_column }}, id)
   return { ok: true, data: to<Feature>DTO(row) }
 }
 
@@ -232,17 +232,17 @@ export async function update<Feature>Record(
  */
 export async function delete<Feature>Record(
   id: string,
-  organizationId: string,
+  {{ var.tenancy_column }}: string,
 ): Promise<Result<void>> {
   await db
     .delete(<featureSnake>)
     .where(
       and(
         eq(<featureSnake>.id, id),
-        eq(<featureSnake>.organizationId, organizationId), // ← ownership in query
+        eq(<featureSnake>.{{ var.tenancy_column }}, {{ var.tenancy_column }}), // ← ownership in query
       ),
     )
-  await invalidate<Feature>Cache(organizationId, id)
+  await invalidate<Feature>Cache({{ var.tenancy_column }}, id)
   return { ok: true, data: undefined }
 }
 
@@ -260,7 +260,7 @@ async function invalidate<Feature>Cache(orgId: string, id?: string): Promise<voi
 function to<Feature>DTO(row: <Feature>): <Feature>DTO {
   return {
     id:             row.id,
-    organizationId: row.organizationId,
+    {{ var.tenancy_column }}: row.{{ var.tenancy_column }},
     createdAt:      row.createdAt.toISOString(),
     updatedAt:      row.updatedAt.toISOString(),
     // TODO: map business columns
@@ -301,7 +301,7 @@ Remove all Redis imports, `cacheKey`, `CACHE_TTL_SECONDS`, and `invalidate<Featu
 **Includes**:
 - `import 'server-only'`          ← DAL_MISSING_SERVER_ONLY satisfied
 - BetterAuth session + membership ← UNAUTHORIZED / FORBIDDEN enforced
-- `organizationId` on every query ← MISSING_ORG_SCOPE satisfied
+- `{{ var.tenancy_column }}` on every query ← MISSING_ORG_SCOPE satisfied
 - `Result<T, E>` envelope         ← typed errors, no raw throws to callers
 - ioredis cache: key pattern `<feature>:org:{orgId}:{id}`, TTL 5m
 - React `cache()` for intra-request dedup
@@ -317,7 +317,7 @@ Remove all Redis imports, `cacheKey`, `CACHE_TTL_SECONDS`, and `invalidate<Featu
 
 **Next steps**:
 - Run `/speckit.scaffold.route <feature-name>` to scaffold the tRPC router and page
-- Run `/speckit.analyze` to verify organizationId scoping and cache tag coverage
+- Run `/speckit.analyze` to verify {{ var.tenancy_column }} scoping and cache tag coverage
 - Run `bun run typecheck` to confirm the file compiles
 ```
 
@@ -326,8 +326,8 @@ Remove all Redis imports, `cacheKey`, `CACHE_TTL_SECONDS`, and `invalidate<Featu
 Before writing the file, verify:
 
 1. `import 'server-only'` is the **first non-comment line**.
-2. `organizationId` is a required (non-optional) parameter on every write function.
-3. Every `db.query.*` or `db.select()` call includes `eq(<featureSnake>.organizationId, orgId)` in `where`.
+2. `{{ var.tenancy_column }}` is a required (non-optional) parameter on every write function.
+3. Every `db.query.*` or `db.select()` call includes `eq(<featureSnake>.{{ var.tenancy_column }}, orgId)` in `where`.
 4. No `SELECT *` — every `columns` object is explicit.
 5. No sensitive fields (`passwordHash`, `token`, `secret`, `apiKey`) in the DTO mapper return value.
 6. No raw SQL string interpolation.

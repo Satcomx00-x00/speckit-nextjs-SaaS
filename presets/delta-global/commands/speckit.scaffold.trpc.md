@@ -1,5 +1,15 @@
 ---
 description: "Scaffold a tRPC router for the Delta-Global stack without the full feature scaffold"
+handoffs:
+  - label: Write procedure tests
+    agent: speckit.checklist
+    prompt: Run preset:pre-merge against the feature that owns this router.
+  - label: Analyze consistency
+    agent: speckit.analyze
+    prompt: Cross-check the new router against the plan for RBAC gaps and hard constraint violations.
+  - label: Scaffold the route
+    agent: speckit.scaffold.route
+    prompt: Scaffold the RSC page that consumes this router.
 ---
 
 # speckit.scaffold.trpc
@@ -62,7 +72,7 @@ import {
   <Feature>Dto,
   <Feature>ListDto,
   <Feature>ErrorCode,
-} from "@delta-global/shared";
+} from "{{ var.package_scope }}/shared";
 import {
   get<Feature>ById,
   list<Feature>s,
@@ -107,7 +117,7 @@ export const <featureCamel>Router = createTRPCRouter({
 
       const result = await get<Feature>ById({
         id: input.id,
-        organizationId: ctx.organization.id,
+        {{ var.tenancy_column }}: ctx.organization.id,
         session: ctx.session,
       });
 
@@ -128,7 +138,7 @@ export const <featureCamel>Router = createTRPCRouter({
       }
 
       const result = await list<Feature>s({
-        organizationId: ctx.organization.id,
+        {{ var.tenancy_column }}: ctx.organization.id,
         session: ctx.session,
         cursor: input.cursor,
         limit: input.limit,
@@ -167,7 +177,7 @@ export const <featureCamel>Router = createTRPCRouter({
 
       const result = await create<Feature>Record({
         ...payload.data,
-        organizationId: ctx.organization.id,
+        {{ var.tenancy_column }}: ctx.organization.id,
         session: ctx.session,
       });
 
@@ -199,7 +209,7 @@ export const <featureCamel>Router = createTRPCRouter({
 
       const result = await update<Feature>Record({
         id: input.id,
-        organizationId: ctx.organization.id,
+        {{ var.tenancy_column }}: ctx.organization.id,
         session: ctx.session,
         data: input,
       });
@@ -226,7 +236,7 @@ export const <featureCamel>Router = createTRPCRouter({
 
       const result = await delete<Feature>Record({
         id: input.id,
-        organizationId: ctx.organization.id,
+        {{ var.tenancy_column }}: ctx.organization.id,
         session: ctx.session,
       });
 
@@ -409,8 +419,8 @@ After generating the router, verify:
 - [ ] Every procedure has a feature flag guard (`flagService.isEnabled`)
 - [ ] Every mutation has an RBAC check (`can<Feature>(ctx.member.role, action)`)
 - [ ] Every mutation has a rate-limit check using ioredis (`rl:<feature>.<action>:{userId}`)
-- [ ] `.input()` and `.output()` schemas imported from `@delta-global/shared` — never inlined
-- [ ] `organizationId` taken from `ctx.organization.id` — NEVER from `input`
+- [ ] `.input()` and `.output()` schemas imported from `{{ var.package_scope }}/shared` — never inlined
+- [ ] `{{ var.tenancy_column }}` taken from `ctx.organization.id` — NEVER from `input`
 - [ ] Router wired into `appRouter` in `apps/api/src/routers/index.ts`
 - [ ] `bun run typecheck` passes
 - [ ] Test stubs created at `apps/api/test/<feature-name>/procedures.test.ts`
@@ -419,7 +429,7 @@ After generating the router, verify:
 
 ## Hard constraints (violations abort scaffold)
 
-- No `@delta-global/analytics-db` imports
+- No `{{ var.package_scope }}/analytics-db` imports
 - No raw SQL — DAL uses Drizzle ORM only
 - No `z.any()`, `z.unknown()`, `z.record(z.any())` in inline schemas
 - No relative cross-workspace imports (`../../packages/...`)

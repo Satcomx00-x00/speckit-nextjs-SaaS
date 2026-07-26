@@ -36,6 +36,9 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 **Route prefix**: `<app/...>`
 **Phase**: <P1 | P2 | P3 | P4>
 **Auth**: <none | required | required + ownership>
+**Tenancy**: {{ var.tenancy_model }} (tenant key: `{{ var.tenancy_column }}` — every
+tenant-scoped table, query, and cache key carries it; for `user-scoped`
+projects it is the owning user, for `single-tenant` note the waiver)
 **Constitution ref**: `.specify/memory/constitution.md`
 
 ---
@@ -69,9 +72,24 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 ---
 
-## 3. Data Flow
+## 3. Service Interaction Map
 
-### 3a. Server Actions
+> One row per service the project has (frontend, API routes, DB, cache,
+> background jobs, external APIs, auth, realtime, analytics, storage) with an
+> explicit touched/not-touched verdict. "Not touched" requires a reason.
+
+| Service | Touched? | Interaction | Changes needed | If down/slow |
+|---|---|---|---|---|
+| <service> | yes/no | <read/write/call/emit> | <files> | <failure behavior> |
+
+- Every "yes" row must appear in the sections below and in the Testing Plan.
+- External APIs must name timeout, retry budget, fallback, and cost.
+
+---
+
+## 4. Data Flow
+
+### 4a. Server Actions
 
 | Action | File | Parse | Authorize | Ownership | DTO |
 |---|---|---|---|---|---|
@@ -79,13 +97,13 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 *Each action is a public POST endpoint. Parse → Authorize → Ownership → DTO is non-negotiable (constitution: BE.ACTION / Critical).*
 
-### 3b. Route Handlers
+### 4b. Route Handlers
 
 | Method | File | Auth | Rate-limit | Purpose |
 |---|---|---|---|---|
 | POST | `app/api/<path>/route.ts` | Bearer / session | yes | webhook / external client |
 
-### 3c. DAL Methods
+### 4c. DAL Methods
 
 | Method | File | Input type | Return type |
 |---|---|---|---|
@@ -96,7 +114,7 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 ---
 
-## 4. Schema Validators
+## 5. Schema Validators
 
 | Schema name | File | Validates |
 |---|---|---|
@@ -107,7 +125,7 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 ---
 
-## 5. Caching Strategy
+## 6. Caching Strategy
 
 | Fetch / Query | Cache directive | Revalidation |
 |---|---|---|
@@ -118,7 +136,7 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 ---
 
-## 6. Prerendering Strategy
+## 7. Prerendering Strategy
 
 | Segment | Strategy | Reason |
 |---|---|---|
@@ -128,7 +146,7 @@ Produce a structured plan using this exact template. Omit any sub-section that i
 
 ---
 
-## 7. Streaming & Suspense
+## 8. Streaming & Suspense
 
 List every data-fetch boundary and its Suspense skeleton:
 
@@ -139,7 +157,7 @@ List every data-fetch boundary and its Suspense skeleton:
 
 ---
 
-## 8. Metadata
+## 9. Metadata
 
 ```ts
 // app/<path>/page.tsx — generateMetadata
@@ -157,7 +175,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 ---
 
-## 9. Accessibility Checkpoints
+## 10. Accessibility Checkpoints
 
 - [ ] Interactive elements are native HTML (`<button>`, `<a>`) or carry full ARIA role/label
 - [ ] Images carry descriptive `alt`; decorative images use `alt=""`
@@ -167,7 +185,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 ---
 
-## 10. Error Handling
+## 11. Error Handling
 
 | Layer | Mechanism | Scope |
 |---|---|---|
@@ -180,7 +198,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 ---
 
-## 11. Security Checklist
+## 12. Security Checklist
 
 - [ ] CSRF: Server Actions are protected by Next.js origin check (same-origin + `SameSite=Lax` cookie)
 - [ ] Route Handler webhooks verify HMAC signature before processing
@@ -192,7 +210,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 ---
 
-## 12. Testing Plan
+## 13. Testing Plan
 
 | Test type | Target | Tool |
 |---|---|---|
@@ -203,7 +221,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 ---
 
-## 13. Phase Gate
+## 14. Phase Gate
 
 **This plan targets Phase <P1/P2/P3/P4>.** Directives from higher phases are noted as `[future]` and do not block this iteration.
 
@@ -214,7 +232,7 @@ Items deferred to a higher phase:
 
 ---
 
-## 14. Open Questions
+## 15. Open Questions
 
 List any decisions the team needs to make before implementation starts:
 
@@ -230,10 +248,11 @@ List any decisions the team needs to make before implementation starts:
 
 After producing the plan:
 
-1. Verify every Server Action listed in §3a has Parse / Authorize / Ownership / DTO columns completed. If any column is marked `—` without justification, call it out as a constitution risk.
-2. Verify every DAL method listed in §3c has a typed return envelope — not `Promise<any>` or `Promise<Row>`.
-3. Verify every `fetch` in §5 has an explicit cache directive — no row is left blank.
-4. If the plan targets P1 but includes Critical directives that are marked `[future]`, flag each one and ask the user to confirm the deferral.
+1. Verify every Server Action listed in §4a has Parse / Authorize / Ownership / DTO columns completed. If any column is marked `—` without justification, call it out as a constitution risk.
+2. Verify every DAL method listed in §4c has a typed return envelope — not `Promise<any>` or `Promise<Row>`.
+3. Verify every `fetch` in §6 has an explicit cache directive — no row is left blank.
+4. Verify the Service Interaction Map (§3) has an explicit yes/no verdict for every service the project has, every "yes" row is reflected in a later section AND in the Testing Plan, and every external-API row names timeout / retry / fallback / cost. A blank or missing row blocks the plan.
+5. If the plan targets P1 but includes Critical directives that are marked `[future]`, flag each one and ask the user to confirm the deferral.
 
 After completing these checks, offer:
 

@@ -17,6 +17,83 @@
 
 ---
 
+## 🍴 About this fork: spec-kit for Next.js SaaS
+
+This is a fork of [github/spec-kit](https://github.com/github/spec-kit)
+specialized for building **production SaaS products on Next.js/TypeScript**.
+Everything upstream documents below still applies; the fork adds:
+
+### SaaS delivery workflows (`specify workflow run <id>`)
+
+| Workflow | What it drives |
+|---|---|
+| `saas-feature` | Full feature delivery: scope → RFC → schema → DAL → services → API → UI → E2E → quality gates → **verify** → PR → progressive rollout (internal → beta → 10/50/100%) → observability provisioning → flag retirement → retro |
+| `hotfix` | Fast-path fix: scope → fix → regression test → quality gates → verify → staging → prod gate → blameless postmortem (critical/high) |
+| `migration-only` | Schema changes with explicit **expand-contract** phases, mandatory human SQL review, backfill scripts with consistency checks, and a **migration record** artifact tracking what ran where |
+
+Every tool command in these workflows is an input with a default (defaults
+assume Bun + Turborepo + tRPC + Drizzle) — override them at run time to fit
+any Next.js/TS stack.
+
+### `/speckit.verify` — the closing loop
+
+Evidence-based post-implementation verification: probes every EARS
+acceptance criterion (never passes from code-reading alone), checks the
+feature flag actually exists in the registry, migrations apply, observability
+signals are actually emitted, and that every CI gate the tasks claim exists
+in the repository's CI configuration. Writes `verify-report.md`; FAIL blocks
+the ready-for-review gate.
+
+### Machine-checkable gates
+
+Workflow `gate` steps accept a `check:` shell command that runs **before**
+the human is prompted (`on_check_fail: block | warn`). Approval can no longer
+be offered while a machine-verifiable pre-condition (flag registered, spec
+artifact exists, migration files present) is unmet.
+
+### EARS acceptance criteria
+
+Specs and the `specify` command generate acceptance criteria in EARS syntax
+(`WHEN <trigger>, THE SYSTEM SHALL <response>`, plus WHILE/IF-THEN/WHERE
+forms) — testable by construction, and exactly what `verify` probes.
+
+### Presets
+
+| Preset | Purpose |
+|---|---|
+| `nextjs` | Stack-neutral Next.js directives: constitution + agent context, audits (`speckit.audit`, `speckit.audit.deep`), constitution scanner, ADR commands (`adr.new` / `adr.supersede` / `adr.audit`), session memory (`context.refresh`, `session.close`, `handoff`), scaffolds, `speckit.help` |
+| `delta-global` | Example **company preset**: the same commands fully specialized for one concrete stack (Bun, Hono+tRPC v11, Drizzle, BetterAuth, ioredis, BullMQ/Temporal, ClickHouse, ArgoCD, Infisical). Copy it as the starting point for your own |
+
+### Preset variables
+
+Presets declare `variables:` (with defaults) and reference them as
+`{{ var.name }}` in command/template bodies; values resolve at install time.
+Projects override them in `.specify/preset-variables.yml`:
+
+```yaml
+# .specify/preset-variables.yml
+nextjs:
+  tenancy_model: user-scoped     # org-scoped | user-scoped | hybrid | single-tenant
+  tenancy_column: ownerId
+delta-global:
+  package_scope: "@acme"
+```
+
+Tenancy is the flagship use: the tenant key column and tenancy model are
+configuration, not hardcoded `organizationId` — the same kit serves
+org-scoped B2B, user-scoped B2C, and single-tenant products.
+
+### Install this fork
+
+```bash
+uv tool install specify-cli --from git+https://github.com/Satcomx00-x00/speckit-nextjs-SaaS.git
+specify init my-saas
+specify preset add nextjs
+specify workflow run saas-feature
+```
+
+---
+
 ## Table of Contents
 
 - [🤔 What is Spec-Driven Development?](#-what-is-spec-driven-development)

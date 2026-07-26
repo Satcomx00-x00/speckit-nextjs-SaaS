@@ -3,15 +3,15 @@ schema_version: "1.0"
 workflow:
   id: "saas-feature"
   name: "SaaS Feature Delivery Cycle"
-  version: "1.0.0"
+  version: "1.2.0"
   author: "satcom"
   description: >-
     Production-grade feature delivery for a multi-tenant SaaS webapp.
-    Drives the full cycle: scope → RFC → schema → DAL → services → tRPC →
-    UI → E2E → quality gates → PR → progressive rollout → observability.
-    Stack assumptions: Bun + Turborepo, Next.js (apps/web), Hono+tRPC v11
-    (apps/api), Drizzle + Postgres/pgvector, BetterAuth, Temporal + BullMQ,
-    OpenTelemetry + Grafana stack + GlitchTip, ArgoCD + Kustomize, Infisical.
+    Drives the full cycle: scope → RFC → schema → DAL → services → API →
+    UI → E2E → quality gates → verify → PR → progressive rollout →
+    observability. Every tool command is an input with a default, so the
+    workflow adapts to any Next.js/TypeScript SaaS; the defaults assume a
+    Bun + Turborepo monorepo with tRPC and Drizzle (see inputs).
 
 requires:
   speckit_version: ">=0.7.2"
@@ -31,13 +31,13 @@ inputs:
 
   integration:
     type: string
-    default: "claude"
-    prompt: "AI coding integration to use (claude, copilot, gemini)"
+    default: "auto"
+    prompt: "AI coding integration to use (auto, claude, copilot, gemini)"
 
   api_app:
     type: string
     default: "apps/api"
-    prompt: "Path to the API app (Hono + tRPC)"
+    prompt: "Path to the API app"
 
   web_app:
     type: string
@@ -47,33 +47,88 @@ inputs:
   db_package:
     type: string
     default: "@delta-global/db"
-    prompt: "Drizzle schema package name"
+    prompt: "DB schema package name"
 
   shared_package:
     type: string
     default: "@delta-global/shared"
-    prompt: "Shared Zod schemas package"
+    prompt: "Shared validation-schema package name"
 
   needs_migration:
     type: boolean
     default: true
     prompt: "Does this feature require a DB migration?"
 
-  needs_temporal_workflow:
+  needs_durable_workflow:
     type: boolean
     default: false
-    prompt: "Does this feature need a Temporal workflow (durable async)?"
+    prompt: "Does this feature need a durable workflow (e.g. Temporal)?"
 
-  needs_clickhouse:
+  needs_analytics:
     type: boolean
     default: false
-    prompt: "Does this feature write analytics to ClickHouse?"
+    prompt: "Does this feature write product analytics events?"
 
   rollout_strategy:
     type: string
     default: "progressive"
-    enum: ["progressive", "internal-only", "all-orgs"]
+    enum: ["progressive", "internal-only", "all-tenants"]
     prompt: "Rollout strategy after merge"
+
+  install_cmd:
+    type: string
+    default: "bun install"
+    prompt: "Dependency install command"
+
+  lint_cmd:
+    type: string
+    default: "bun run lint"
+    prompt: "Lint command"
+
+  typecheck_cmd:
+    type: string
+    default: "bun run typecheck"
+    prompt: "Typecheck command"
+
+  deadcode_cmd:
+    type: string
+    default: "bun run knip"
+    prompt: "Dead-code / unused-exports check command (empty CI job? remove it from tasks too)"
+
+  build_cmd:
+    type: string
+    default: "turbo run build --filter=...[HEAD^1]"
+    prompt: "Build command for affected packages"
+
+  secretscan_cmd:
+    type: string
+    default: "gitleaks detect --no-banner"
+    prompt: "Secret scan command"
+
+  dep_audit_cmd:
+    type: string
+    default: "bun pm audit --severity high"
+    prompt: "Dependency audit command"
+
+  test_cmd:
+    type: string
+    default: "bun test"
+    prompt: "Unit/integration test runner command (file path appended)"
+
+  e2e_cmd:
+    type: string
+    default: "bun run test:e2e"
+    prompt: "E2E test command (--grep filters appended)"
+
+  migrate_generate_cmd:
+    type: string
+    default: "bun --filter @delta-global/db drizzle-kit generate"
+    prompt: "Command that generates a migration from the schema"
+
+  migrate_apply_cmd:
+    type: string
+    default: "bun --filter @delta-global/db drizzle-kit migrate"
+    prompt: "Command that applies migrations locally"
 
 steps:
   # ──────────────────────────────────────────────────────────────────
@@ -87,16 +142,19 @@ steps:
         Feature: {{ inputs.feature_name }}
         Description: {{ inputs.feature_description }}
 
+        Run the full intake interview with the user before writing the scope
+        (skip automatically if no user is available in this run).
+
         Produce a complete product scope:
         - User story (As [role] / I want [action] / So that [benefit])
-        - Binary acceptance criteria (verifiable yes/no)
+        - Acceptance criteria in EARS syntax (WHEN/WHILE/IF-THEN/SHALL), binary yes/no
         - Non-goals (what is explicitly out of scope)
-        - RBAC roles affected (owner / admin / member / viewer)
+        - Roles affected (use the project's real role set from the constitution)
         - Primary path and alternate paths (numbered steps)
         - Edge cases (empty lists, max length, timeouts, offline, Unicode)
         - Success metrics: adoption %, J7/J30 retention, p95 latency, error rate
-        - Marginal cost estimate (Postgres rows, ClickHouse rows,
-          Temporal executions, BullMQ jobs, storage)
+        - Marginal cost estimate (DB rows, analytics events, background jobs,
+          storage, external API calls)
         - Rollback thresholds (e.g. "rollback if error rate > 2% or p95 > 800ms")
         - GDPR classification of any PII collected, with retention policy
 
@@ -106,17 +164,18 @@ steps:
     input:
       args: >-
         Validate that the scope is complete, testable, and that every
-        acceptance criterion is binary (yes/no verifiable). Flag any
-        criterion containing "should", "ideally", "if possible".
+        acceptance criterion is EARS-format and binary (yes/no verifiable).
+        Flag any criterion containing "should", "ideally", "if possible".
 
   - id: review-scope
     type: gate
     message: |
       Review the product scope before tech design.
       Required approvers: PM (need) + tech lead (feasibility) + design (UX).
-      Check: binary criteria, measurable metrics, rollback thresholds set.
+      Check: EARS criteria, measurable metrics, rollback thresholds set.
     options: [approve, reject]
     on_reject: abort
+    check: "find specs -type f -name 'spec.md' -path '*{{ inputs.feature_name }}*' | grep -q ."
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 1 — Technical RFC (design-only PR)
@@ -128,65 +187,77 @@ steps:
       args: |
         Produce the technical RFC for "{{ inputs.feature_name }}":
 
-        1. DRIZZLE SCHEMA in {{ inputs.db_package }}
-           - Tables with organizationId FK + index on each tenant-scoped table
-           - createdAt / updatedAt with timestamp({ withTimezone: true })
+        1. DB SCHEMA in {{ inputs.db_package }}
+           - Tenant-key FK + index on each tenant-scoped table (per constitution)
+           - createdAt / updatedAt timestamps with timezone
            - Composite indexes for frequent filter+sort queries
            - Unique / check constraints explicit
            - Soft-delete vs hard-delete decision documented
 
-        2. ZOD SCHEMAS in {{ inputs.shared_package }} (Zod v3)
-           - One input schema per tRPC procedure, named explicitly
+        2. VALIDATION SCHEMAS in {{ inputs.shared_package }}
+           - One input schema per API endpoint, named explicitly
            - Output DTO schemas (omit tokens, hashes, internal fields)
            - Business error union types as `const` literals
            - Discriminated unions for variants
            - No z.any(), no z.unknown(), no z.record(z.any())
 
-        3. tRPC PROCEDURES in {{ inputs.api_app }}/src/routers/{{ inputs.feature_name }}.ts
-           - Each procedure: name, query|mutation, input/output, min role
-           - orgScopedProcedure for tenant-scoped operations
-           - Hono routes ONLY for webhooks / mobile / streaming
+        3. API SURFACE in {{ inputs.api_app }}
+           - Each endpoint: name, query|mutation, input/output, min role
+           - Tenant-scoped entry point for tenant-scoped operations
+           - Raw HTTP routes ONLY for webhooks / mobile / streaming
 
         4. DAL FUNCTIONS in {{ inputs.api_app }}/src/dal/{{ inputs.feature_name }}.ts
-           - Read-only functions, one per business use case
-           - organizationId required as explicit parameter
+           - Read functions, one per business use case
+           - Tenant key required as explicit parameter
            - Cache keys and TTL listed
 
         5. SERVICES (pure) in {{ inputs.api_app }}/src/services/{{ inputs.feature_name }}.ts
            - Result<T, E> discriminated unions, no throw
-           - No db / auth / redis / Hono / tRPC / Next imports
+           - No db / auth / cache / framework imports
 
         6. FEATURE FLAG
-           - Name: ff-{{ inputs.feature_name }}
-           - Granularity (global / org / user / percentage)
-           - Kill switch < 5s
+           - Name: ff-{{ inputs.feature_name }} (follow the project registry's naming exactly)
+           - Registry location (file path where the key MUST be added)
+           - Granularity (global / tenant / user / percentage — only what the
+             project's flag system actually supports)
+           - Kill switch propagation time
            - Planned removal date
 
         7. CACHE STRATEGY
-           - Redis keys: feature:org:{orgId}:{id}
-           - TTL per key type
-           - Invalidation list per mutation
-           - React Query queryKey alignment
+           - Keys, TTL per key type
+           - Invalidation list per mutation + blast-radius statement
+           - Client query-key alignment
 
         8. BACKGROUND JOBS
-           - Temporal vs BullMQ decision per side-effect
-           - Workflow IDs idempotent
+           - Durable workflow vs fire-and-forget queue decision per side-effect
+           - Job/workflow IDs idempotent
            - Activities isolate external effects
 
         9. RBAC MATRIX
-           - Action × role table (owner / admin / member / viewer / public)
+           - Action × role table using the project's real role set
 
         10. OBSERVABILITY
-            - OTel span attributes: org.id, user.id, procedure.name
+            - Span/metric attributes: tenant id, user id, endpoint name
             - Structured log fields
             - Analytics events named feature.action
 
+        11. SERVICE INTERACTION MAP (mandatory sweep)
+            - One row per service the platform has: frontend, API, DB,
+              cache, background workers, durable workflows, external APIs
+              (LLM/email/payment/...), auth, realtime, analytics, storage
+            - Each row: touched yes/no, interaction type, changes needed,
+              and behavior when that service is down or slow
+            - "Not touched" requires a one-line reason — no blank rows
+            - Every external API call names timeout, retry budget,
+              fallback behavior, and marginal cost
+            - Every "yes" row must be reflected in blocks 1-10 and in the
+              testing plan (a failure-mode test per touched service)
+
         HARD CONSTRAINTS (any violation aborts the RFC):
-        - No raw SQL (drizzle-kit generate only)
-        - No @delta-global/analytics-db imports in apps/api or apps/web
-        - organizationId on every tenant-scoped table, query, cache key
-        - tRPC for internal, Hono routes only for webhook/mobile
-        - Secrets via Infisical, never .env
+        - Migrations generated by ORM tooling only — no handwritten SQL
+        - No analytics-store imports from app code
+        - Tenant key on every tenant-scoped table, query, cache key
+        - Secrets via the project's secret manager, never bare env access
 
   - id: rfc-analyze
     command: speckit.analyze
@@ -194,9 +265,11 @@ steps:
     input:
       args: >-
         Cross-check the RFC: every table is referenced by at least one DAL or
-        procedure, every Zod schema matches a procedure, every cache tag has
-        an invalidation site, every RBAC entry maps to a procedure. Report
-        any orphan or missing piece.
+        endpoint, every schema matches an endpoint, every cache tag has
+        an invalidation site, every RBAC entry maps to an endpoint, and the
+        Service Interaction Map is consistent — every "yes" row has a
+        corresponding design block, and no design block touches a service
+        the map marks "no". Report any orphan or missing piece.
 
   - id: rfc-checklist
     command: speckit.checklist
@@ -204,13 +277,17 @@ steps:
     input:
       args: |
         Validate the RFC against:
-        - Every tenant table has organizationId FK + index
-        - Every procedure has Zod input + role requirement + cache invalidation
-        - Every analytics write path uses ClickHouse, not Postgres
-        - Feature flag declared with kill switch
+        - Every tenant table has the tenant-key FK + index
+        - Every endpoint has input validation + role requirement + cache invalidation
+        - Service Interaction Map complete: explicit yes/no for every platform
+          service, no blank rows, reasons on every "not touched"
+        - Every external API row names timeout / retry / fallback / cost cap
+        - Every touched service has a failure-mode entry in the testing plan
+        - Analytics writes go to the analytics store, not the primary DB
+        - Feature flag declared with registry location and kill switch
         - GDPR data classification consistent across layers
         - No raw SQL anywhere
-        - No analytics-db imports in apps/api or apps/web
+        - No analytics-store imports in app code
 
   - id: review-rfc
     type: gate
@@ -221,50 +298,50 @@ steps:
       Reviewers: tech lead minimum, +1 if billing/auth/security touched.
     options: [approve, reject, revise]
     on_reject: abort
+    check: "find specs -type f -name 'plan.md' -path '*{{ inputs.feature_name }}*' | grep -q ."
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 2 — Scaffolding
   # ──────────────────────────────────────────────────────────────────
   - id: branch
     type: shell
-    command: "git checkout main && git pull && git checkout -b feat/{{ inputs.feature_name }}"
+    run: "git checkout main && git pull && git checkout -b feat/{{ inputs.feature_name }}"
 
   - id: scaffold
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: |
-      Create the empty file structure for feature "{{ inputs.feature_name }}":
+      Create the empty file structure for feature "{{ inputs.feature_name }}"
+      following the plan's File Map:
 
       DB / contracts:
-      - packages/db/src/schema/{{ inputs.feature_name }}.ts
-      - packages/shared/src/schemas/{{ inputs.feature_name }}.ts
+      - schema file in {{ inputs.db_package }}
+      - validation schemas in {{ inputs.shared_package }}
 
       API ({{ inputs.api_app }}):
-      - src/routers/{{ inputs.feature_name }}.ts
+      - API surface file (router / actions / handlers)
       - src/dal/{{ inputs.feature_name }}.ts        (with `import "server-only"`)
       - src/services/{{ inputs.feature_name }}.ts
       - test/{{ inputs.feature_name }}/{dal,services,procedures}.test.ts
 
       Web ({{ inputs.web_app }}):
-      - app/(app)/[workspace]/{{ inputs.feature_name }}/page.tsx
-      - app/(app)/[workspace]/{{ inputs.feature_name }}/loading.tsx
-      - app/(app)/[workspace]/{{ inputs.feature_name }}/error.tsx
+      - the feature's route segment: page.tsx, loading.tsx, error.tsx
       - components/features/{{ inputs.feature_name }}/index.ts
-      - tests/e2e/{{ inputs.feature_name }}/
+      - the feature's e2e directory
 
-      Wire the feature flag `ff-{{ inputs.feature_name }}` in the flag service,
-      OFF by default. Add server-side guards in the page (redirect on OFF) and
-      in every tRPC procedure (TRPCError FORBIDDEN on OFF).
+      Wire the feature flag `ff-{{ inputs.feature_name }}` in the project's
+      flag registry, OFF by default. Add server-side guards in the page
+      (redirect on OFF) and in every API entry point (FORBIDDEN on OFF).
 
-      Add new env vars to {{ inputs.api_app }}/src/lib/env.ts (typed via
-      @t3-oss/env-nextjs equivalent) and to Infisical. Update .env.example.
+      Add new env vars to the project's validated env module and to the
+      secret manager. Update .env.example.
 
       Do NOT use relative cross-workspace imports. Always import via the
-      @delta-global/* scope.
+      workspace package scope.
 
   - id: scaffold-check
     type: shell
-    command: "bun install && bun run lint && bun run typecheck"
+    run: "{{ inputs.install_cmd }} && {{ inputs.lint_cmd }} && {{ inputs.typecheck_cmd }}"
 
   - id: scaffold-pr
     type: prompt
@@ -285,66 +362,67 @@ steps:
         integration: "{{ inputs.integration }}"
         input:
           args: |
-            Implement Drizzle schema in {{ inputs.db_package }}/src/schema/{{ inputs.feature_name }}.ts
-            per the approved RFC. Requirements:
-            - uuid().primaryKey().defaultRandom() on each table id
-            - organizationId references organizations.id, onDelete justified
-            - timestamps with timezone
-            - Indexes on (organizationId, createdAt desc) at minimum
-            - Export InferSelectModel and InferInsertModel types
-            - Declare relations() where applicable
+            Implement the DB schema in {{ inputs.db_package }} for
+            "{{ inputs.feature_name }}" per the approved RFC. Requirements:
+            - Primary keys per project convention
+            - Tenant-key FK per constitution, onDelete justified
+            - Timestamps with timezone
+            - Indexes on (tenant key, createdAt desc) at minimum
+            - Export inferred row/insert types
+            - Declare relations where applicable
             - Add inline comments on non-obvious columns
 
       - id: migration-generate
         type: shell
-        command: "bun --filter {{ inputs.db_package }} drizzle-kit generate"
+        run: "{{ inputs.migrate_generate_cmd }}"
 
       - id: review-migration
         type: gate
         message: |
           Review the generated SQL migration line by line.
           - No NOT NULL on existing table without default
-          - No destructive DROP without two-step migration (add → backfill → switch → drop)
+          - No destructive DROP without expand-contract plan (add → backfill → switch → drop)
           - CREATE INDEX CONCURRENTLY on tables > 100k rows
           - Two-step backfill plan if data transformation needed
-          REMEMBER: never handwrite SQL (drizzle-kit generate only).
+          REMEMBER: never handwrite SQL (generated migrations only).
         options: [approve, reject]
         on_reject: abort
 
       - id: migration-apply-local
         type: shell
-        command: "bun --filter {{ inputs.db_package }} drizzle-kit migrate"
+        run: "{{ inputs.migrate_apply_cmd }}"
 
       - id: seeds
         command: speckit.tasks
         integration: "{{ inputs.integration }}"
         input:
           args: >-
-            Add seed data in scripts/seed.ts. Create at least 2 organizations
-            with data each to enable tenant-isolation tests. Idempotent
-            seeds. Realistic data (no "test1", "foo"). Include Unicode and
-            max-length edge cases.
+            Add seed data in the project's seed script. Create at least 2
+            tenants with data each to enable tenant-isolation tests.
+            Idempotent seeds. Realistic data (no "test1", "foo"). Include
+            Unicode and max-length edge cases.
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 4 — Zod contracts
+  # PHASE 4 — Validation contracts
   # ──────────────────────────────────────────────────────────────────
   - id: contracts
     command: speckit.tasks
     integration: "{{ inputs.integration }}"
     input:
       args: |
-        Implement Zod schemas in {{ inputs.shared_package }}/src/schemas/{{ inputs.feature_name }}.ts:
-        - One input schema per tRPC procedure (createXInput, updateXInput, etc.)
+        Implement validation schemas in {{ inputs.shared_package }} for
+        "{{ inputs.feature_name }}":
+        - One input schema per API endpoint (createXInput, updateXInput, etc.)
         - One output DTO schema per query/mutation (omit sensitive fields)
         - Business error union as `const` literals
         - Precise constraints: .min, .max, .regex, .email, .url
         - Discriminated unions for variants
-        - No z.any, no z.unknown, no z.record(z.any) (Biome will fail)
+        - No z.any, no z.unknown, no z.record(z.any)
         - Export from the package barrel
 
   - id: contracts-typecheck
     type: shell
-    command: "bun run typecheck"
+    run: "{{ inputs.typecheck_cmd }}"
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 5 — DAL (reads)
@@ -357,14 +435,15 @@ steps:
         Implement DAL in {{ inputs.api_app }}/src/dal/{{ inputs.feature_name }}.ts:
         - First line: import "server-only"
         - One function per business use case (not per table)
-        - organizationId is required, never optional
-        - Session verified via BetterAuth, then membership checked
-        - Filter eq(table.organizationId, orgId) on EVERY query
+        - Tenant key is required, never optional
+        - Session verified, then membership/ownership checked
+        - Tenant-key filter on EVERY query
         - Cursor-based pagination only
         - Whitelisted sort columns
-        - Explicit column selection (no SELECT *)
+        - Explicit column selection (no SELECT *, no bare-table select that
+          drags wide columns like embeddings/content into list reads)
         - Exclude tokens, hashes, secrets from returns
-        - Redis cache via ioredis: key feature:org:{orgId}:{id}
+        - Cache per plan §8 (key shape and TTL from the plan)
         - Wrap with React `cache()` for intra-request dedup
         - JSDoc on every public function
 
@@ -374,18 +453,17 @@ steps:
     input:
       args: |
         Write DAL tests in {{ inputs.api_app }}/test/{{ inputs.feature_name }}/dal.test.ts
-        using bun:test + Testcontainers (Postgres ephemeral):
+        against a real (ephemeral if available) database:
         - happy path per function
-        - cross-org isolation: user of org A querying org B → empty/throw
+        - cross-tenant isolation: user of tenant A querying tenant B → empty/throw
         - no session → UNAUTHORIZED
         - no membership → FORBIDDEN
-        - suspended org → throw or empty per business rule
         - pagination (page 1, cursor, last page)
         - cache hit: 2 calls → 1 DB query
 
   - id: run-dal-tests
     type: shell
-    command: "bun test {{ inputs.api_app }}/test/{{ inputs.feature_name }}/dal.test.ts"
+    run: "{{ inputs.test_cmd }} {{ inputs.api_app }}/test/{{ inputs.feature_name }}/dal.test.ts"
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 6 — Services (pure logic)
@@ -397,7 +475,7 @@ steps:
       args: |
         Implement pure service functions in
         {{ inputs.api_app }}/src/services/{{ inputs.feature_name }}.ts:
-        - Zero imports from db, auth, redis, Hono, tRPC, Next, headers, cookies
+        - Zero imports from db, auth, cache, framework, headers, cookies
         - Result<T, E> discriminated union for outcomes (no throw on business errors)
         - 'now' and 'rng' injected as parameters (no Date.now / Math.random direct)
         - Single responsibility per function
@@ -420,34 +498,31 @@ steps:
 
   - id: run-services-tests
     type: shell
-    command: "bun test {{ inputs.api_app }}/test/{{ inputs.feature_name }}/services.test.ts"
+    run: "{{ inputs.test_cmd }} {{ inputs.api_app }}/test/{{ inputs.feature_name }}/services.test.ts"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 7 — tRPC procedures
+  # PHASE 7 — API surface
   # ──────────────────────────────────────────────────────────────────
   - id: procedures
     command: speckit.tasks
     integration: "{{ inputs.integration }}"
     input:
       args: |
-        Implement tRPC procedures in
-        {{ inputs.api_app }}/src/routers/{{ inputs.feature_name }}.ts:
-        - Wire the router into appRouter
-        - Use orgScopedProcedure (organizationId extracted from BetterAuth
-          session, NEVER from input)
-        - .input(zodSchema) imported from {{ inputs.shared_package }}, never inlined
-        - .output(zodSchema) for typed contracts to the SDK
-        - .meta({ name: "..." }) for OTel + structured logs
-        - Role check via session.member.role (delegate logic to service)
-        - Quota check against plan
-        - Rate limit via ioredis (key: rl:procedure.name:{userId})
-        - db.transaction() for multi-table mutations
-        - Cache invalidation via Redis DEL on prefix scan
-        - Background work: temporalClient.workflow.start() for durable,
-          bullmq.add() for fire-and-forget
-        - Workflow IDs idempotent (post-{id}-publish style)
-        - Errors: TRPCError with `code`, generic client message,
-          stack to GlitchTip + Loki
+        Implement the API surface for "{{ inputs.feature_name }}" in
+        {{ inputs.api_app }} per plan §3:
+        - Wire the router/actions into the app's API entry point
+        - Tenant-scoped entry point (tenant key extracted from the session,
+          NEVER from input)
+        - Input schemas imported from {{ inputs.shared_package }}, never inlined
+        - Output schemas for typed contracts to the client
+        - Endpoint named for observability (span/metric name)
+        - Role check via session role (delegate logic to service)
+        - Quota check against plan/entitlements where applicable
+        - Rate limit on writes (key: rl:endpoint:{userId})
+        - Transactions for multi-table mutations
+        - Cache invalidation exactly as listed in plan §8
+        - Background work started idempotently (deterministic IDs)
+        - Errors: typed code, generic client message, stack to the error tracker
         - Constraint violations translated to typed business errors
 
   - id: procedures-tests
@@ -455,49 +530,48 @@ steps:
     integration: "{{ inputs.integration }}"
     input:
       args: |
-        Write integration tests with Testcontainers (Postgres + Redis + Temporal):
-        - happy path per procedure
+        Write API integration tests against real DB + cache:
+        - happy path per endpoint
         - no session → UNAUTHORIZED
         - no membership → FORBIDDEN
         - insufficient role → FORBIDDEN
-        - invalid input → ZodError formatted to fields
+        - invalid input → validation error formatted to fields
         - idempotency: 2× same call → stable state, no duplicate
         - quota exceeded → typed business error
-        - cache invalidation site verified (correct Redis key deleted)
-        - Temporal workflow start verified with mocked client
+        - cache invalidation site verified (correct cache key deleted)
+        - background-work start verified with a mocked client
 
   - id: run-procedures-tests
     type: shell
-    command: "bun test {{ inputs.api_app }}/test/{{ inputs.feature_name }}/procedures.test.ts"
+    run: "{{ inputs.test_cmd }} {{ inputs.api_app }}/test/{{ inputs.feature_name }}/procedures.test.ts"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 8 — Temporal workflow (conditional)
+  # PHASE 8 — Durable workflow (conditional)
   # ──────────────────────────────────────────────────────────────────
-  - id: temporal
+  - id: durable
     type: if
-    condition: "{{ inputs.needs_temporal_workflow == true }}"
+    condition: "{{ inputs.needs_durable_workflow == true }}"
     then:
       - id: workflow
         command: speckit.tasks
         integration: "{{ inputs.integration }}"
         input:
           args: |
-            Implement Temporal workflow in @delta-global/temporal-workflows:
-            - Workflow: packages/temporal-workflows/src/workflows/{{ inputs.feature_name }}.ts
-            - Activities: packages/temporal-workflows/src/activities/{{ inputs.feature_name }}.ts
+            Implement the durable workflow for "{{ inputs.feature_name }}" in
+            the project's workflow package:
             - Idempotent workflow ID
             - Retry policy + timeouts (StartToClose, ScheduleToClose, Heartbeat)
             - Activities isolate external effects (emails, third-party APIs)
             - Workflow code is deterministic: no Date.now, no Math.random,
               no direct I/O — use workflow APIs only
-            - Test with TestWorkflowEnvironment + time skipping
+            - Test with the engine's test environment + time skipping
 
       - id: workflow-tests
         type: shell
-        command: "bun test packages/temporal-workflows/test/{{ inputs.feature_name }}.test.ts"
+        run: "{{ inputs.test_cmd }} packages/temporal-workflows/test/{{ inputs.feature_name }}.test.ts"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 9 — UI (Next.js 15, React 19)
+  # PHASE 9 — UI (Next.js App Router)
   # ──────────────────────────────────────────────────────────────────
   - id: ui
     command: speckit.tasks
@@ -508,47 +582,43 @@ steps:
 
         page.tsx (RSC):
         - async function Page() — no "use client"
-        - await params and searchParams (Next 15)
-        - Fetch via SDK server caller (@delta-global/sdk createCaller),
-          NOT React Query, NOT fetch
+        - await params and searchParams (Next 15+)
+        - Fetch via the project's server-side caller, NOT client fetch
         - generateMetadata for SEO if public
         - <Suspense> boundaries around slow async sections
-        - PPR-friendly if experimental.ppr is enabled
 
         Client components (use only at interactive leaves):
-        - Mutations via @trpc/react-query useMutation
-        - queryClient.invalidateQueries on success
-        - react-hook-form + zodResolver(schemaFromShared)
-        - Server errors mapped to fields via setError
-        - Submit disabled while mutation.isPending
+        - Mutations via the project's client query library
+        - Query invalidation on success
+        - Form library + schema resolver (schema from {{ inputs.shared_package }})
+        - Server errors mapped to fields
+        - Submit disabled while mutation is pending
         - Reset on create, prefill on edit
-        - Optimistic updates via onMutate + rollback onError when UX justifies
+        - Optimistic updates with rollback where UX justifies
 
         Four states (mandatory):
         - loading: loading.tsx with skeleton matching final layout
         - empty: illustration + copy + primary CTA
-        - error: error.tsx with humane message + Réessayer (reset()) +
-          GlitchTip capture
-        - success: toast (Sonner) / redirect / optimistic update
+        - error: error.tsx with humane message + retry (reset()) +
+          error-tracker capture
+        - success: toast / redirect / optimistic update
 
         Accessibility:
         - <label> linked to every input (no placeholder-only)
         - aria-invalid + aria-describedby on errors
         - :focus-visible respected
         - Keyboard navigation complete (Enter / Escape / Tab)
-        - AA contrast (Tailwind 4 tokens)
+        - AA contrast
         - aria-live for async updates
         - alt on images, aria-hidden on decorative icons
         - 44×44px touch targets on mobile
 
         Styling:
-        - Components from @delta-global/ui (shadcn/ui + Radix)
-        - cn() (clsx + tailwind-merge)
-        - class-variance-authority for variants
+        - Components from the project's UI library
         - No inline styles except dynamic values
 
-        i18n: all strings via next-intl, ICU plurals, locale-aware
-        formatters. No hardcoded FR/EN.
+        i18n: all strings via the project's i18n solution, ICU plurals,
+        locale-aware formatters. No hardcoded language literals.
 
         Performance: next/image, next/font, next/dynamic for heavy
         client components, parallel fetches with Promise.all, no client
@@ -556,7 +626,7 @@ steps:
 
   - id: ui-component-tests
     type: shell
-    command: "bun test {{ inputs.web_app }}/components/features/{{ inputs.feature_name }}"
+    run: "{{ inputs.test_cmd }} {{ inputs.web_app }}/components/features/{{ inputs.feature_name }}"
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 10 — E2E tests (tenant isolation = blocking)
@@ -566,68 +636,88 @@ steps:
     integration: "{{ inputs.integration }}"
     input:
       args: |
-        Implement Playwright E2E tests in
-        {{ inputs.web_app }}/tests/e2e/{{ inputs.feature_name }}/:
+        Implement E2E tests for "{{ inputs.feature_name }}" in the project's
+        e2e directory:
 
         - happy.spec.ts: login → navigate → mutate → assert visible result
         - errors.spec.ts: validation error path + permission denied path
 
         - isolation.spec.ts (tagged @critical, MUST pass to merge):
-          1. user A on page of org A → data visible
-          2. user A on URL of org B → 404
-          3. user A calls procedure with orgId B → 403
-          4. user A on URL with resource id from org B → 404
+          1. user A on page of tenant A → data visible
+          2. user A on URL of tenant B → 404
+          3. user A calls API with tenant B's key → 403
+          4. user A on URL with resource id from tenant B → 404
 
-        Setup: storage state per role (owner, admin, member, viewer),
-        no re-login per test. Idempotent. No waitForTimeout — wait for
-        selectors. Cleanup created data via afterEach if needed.
+        Setup: storage state per role, no re-login per test. Idempotent.
+        No waitForTimeout — wait for selectors. Cleanup created data via
+        afterEach if needed.
 
   - id: run-e2e
     type: shell
-    command: "bun run test:e2e --grep {{ inputs.feature_name }}"
+    run: "{{ inputs.e2e_cmd }} --grep {{ inputs.feature_name }}"
 
   - id: run-isolation-critical
     type: shell
-    command: "bun run test:e2e --grep @critical --grep {{ inputs.feature_name }}"
+    run: "{{ inputs.e2e_cmd }} --grep @critical --grep {{ inputs.feature_name }}"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 11 — Quality gates (parallel)
+  # PHASE 11 — Quality gates
   # ──────────────────────────────────────────────────────────────────
-  - id: quality-gates
-    type: fan-out
-    over:
-      - { name: "biome",     cmd: "bun run lint" }
-      - { name: "typecheck", cmd: "bun run typecheck" }
-      - { name: "knip",      cmd: "bun run knip" }
-      - { name: "build",     cmd: "turbo run build --filter=...[HEAD^1]" }
-      - { name: "gitleaks",  cmd: "gitleaks detect --no-banner" }
-      - { name: "audit",     cmd: "bun pm audit --severity high" }
-    step:
-      type: shell
-      command: "{{ item.cmd }}"
+  - id: quality-lint
+    type: shell
+    run: "{{ inputs.lint_cmd }}"
 
-  - id: quality-aggregate
-    type: fan-in
-    from: quality-gates
-    aggregate: >-
-      All quality gates must return exit code 0. Report which gate failed
-      and abort the workflow if any did.
+  - id: quality-typecheck
+    type: shell
+    run: "{{ inputs.typecheck_cmd }}"
+
+  - id: quality-deadcode
+    type: shell
+    run: "{{ inputs.deadcode_cmd }}"
+
+  - id: quality-build
+    type: shell
+    run: "{{ inputs.build_cmd }}"
+
+  - id: quality-secretscan
+    type: shell
+    run: "{{ inputs.secretscan_cmd }}"
+
+  - id: quality-dep-audit
+    type: shell
+    run: "{{ inputs.dep_audit_cmd }}"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 12 — PR preparation
+  # PHASE 12 — Verify (evidence-based) + PR preparation
   # ──────────────────────────────────────────────────────────────────
+  - id: verify
+    command: speckit.verify
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Verify feature "{{ inputs.feature_name }}" end-to-end with evidence:
+        every EARS acceptance criterion probed, flag key present in the
+        registry, migration applied, observability signals actually emitted,
+        rollback thresholds wired to alert rules, and every CI gate the
+        tasks claim actually present in the repository's CI configuration.
+        Also verify the Service Interaction Map against the diff: every
+        "yes" row has call sites in the implementation, and any service the
+        code touches that the map marked "no" (or omitted) is reported as
+        MAP_DRIFT — undeclared interactions are failures, not notes.
+        Write verify-report.md. FAIL blocks the ready-for-review gate.
+
   - id: self-review
     command: speckit.analyze
     integration: "{{ inputs.integration }}"
     input:
       args: |
         Cross-check the implementation against the RFC. Report drift:
-        - Every RFC table implemented in Drizzle
-        - Every RFC procedure implemented in tRPC
+        - Every RFC table implemented in the schema
+        - Every RFC endpoint implemented
         - Every RFC permission rule enforced
         - Every cache tag in the RFC is invalidated by the right mutation
-        - Zod schemas in shared and Drizzle types are consistent
-        - No analytics-db imports in apps/api or apps/web
+        - Validation schemas and DB types are consistent
+        - No analytics-store imports in app code
         - No raw SQL anywhere
         - No `any` or `as` without a justifying comment
         - No relative cross-workspace imports
@@ -640,14 +730,15 @@ steps:
     input:
       args: |
         Pre-merge checklist:
+        - verify-report.md exists with overall PASS
         - Migration applied locally + rollback plan documented
         - Feature flag declared and OFF
         - @critical isolation tests green
         - Diff < 600 lines (split otherwise)
         - PR description complete
         - Conventional Commit title
-        - Bun lockfile committed if deps changed
-        - Infisical secrets registered for new env vars
+        - Lockfile committed if deps changed
+        - Secrets registered in the secret manager for new env vars
         - .env.example updated
 
   - id: pr-description
@@ -655,30 +746,31 @@ steps:
     integration: "{{ inputs.integration }}"
     prompt: |
       Generate the PR description for "{{ inputs.feature_name }}":
-      - Link to ticket + RFC PR
+      - Link to ticket + RFC PR + verify-report.md
       - Functional summary (what changes for users)
       - Technical summary (architecture choices, trade-offs, alternatives skipped)
       - Screenshot/Loom placeholders for all four UI states + mobile
       - Migration impact statement (forward-compatible?)
       - Rollback plan (flag OFF → behavior unchanged)
-      - SDK breaking changes if any (@delta-global/sdk semver impact)
+      - Client/SDK breaking changes if any (semver impact)
       - Conventional Commits title (feat / fix / refactor)
 
   - id: ready-for-review
     type: gate
     message: |
-      Implementation complete and quality gates green.
+      Implementation complete, quality gates green, verify-report PASS.
       Push the branch and open the PR.
       Required approvers: 1 by default, 2 if billing / auth / security touched.
     options: [approve, reject]
     on_reject: abort
+    check: "git grep -q 'ff-{{ inputs.feature_name }}' && find specs -type f -name 'verify-report.md' -path '*{{ inputs.feature_name }}*' | grep -q ."
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 13 — Rollout (post-merge)
   # ──────────────────────────────────────────────────────────────────
   - id: rollout
     type: switch
-    on: "{{ inputs.rollout_strategy }}"
+    expression: "{{ inputs.rollout_strategy }}"
     cases:
 
       internal-only:
@@ -686,45 +778,45 @@ steps:
           type: prompt
           integration: "{{ inputs.integration }}"
           prompt: >-
-            Open a PR on platform-infra updating infra/overlays/staging/
-            with the new image tag pushed to ghcr.io/delta-global. Wait
-            for ArgoCD sync.
+            Deploy the new build to staging via the project's deploy process
+            (GitOps PR, platform deploy, etc.). Wait for the deploy to settle.
 
         - id: internal-flag-on
           type: gate
           message: >-
-            Enable ff-{{ inputs.feature_name }} for the internal org only.
-            Smoke test all four user paths. Verify traces in Tempo and
-            absence of new GlitchTip errors.
-          options: [done]
+            Enable ff-{{ inputs.feature_name }} for the internal tenant only.
+            Smoke test all four user paths. Verify traces/logs and absence of
+            new errors in the error tracker.
+          options: [done, abort]
+          on_reject: abort
 
       progressive:
         - id: deploy-staging
           type: prompt
           integration: "{{ inputs.integration }}"
           prompt: >-
-            Open a PR on platform-infra updating infra/overlays/staging/
-            with the new image tag. CNPG migration runs forward before
-            the app deploy. Infisical Operator syncs secrets.
+            Deploy the new build to staging via the project's deploy process.
+            Confirm migrations run forward before the app serves traffic and
+            secrets are synced.
 
-        - id: argocd-staging-sync
+        - id: staging-sync
           type: gate
           message: |
-            Verify ArgoCD staging sync:
-            - Pods Running, readiness probe green
-            - Traefik route active, TLS valid
-            - Postgres, Redis, Temporal connections OK
-            - No new GlitchTip errors
-            - Loki shows clean startup logs
-          options: [healthy, regressed]
+            Verify staging deploy:
+            - App instances healthy, readiness green
+            - Routing/TLS valid
+            - DB, cache, and job-engine connections OK
+            - No new errors in the error tracker
+            - Startup logs clean
+          options: [healthy, abort]
           on_reject: abort
 
         - id: internal-activation
           type: gate
           message: >-
-            Flag ON for internal org. Manual smoke test of all roles
-            (owner/admin/member/viewer). Capture baseline in Grafana.
-          options: [pass, fail]
+            Flag ON for the internal tenant. Manual smoke test of all roles.
+            Capture a metrics baseline.
+          options: [pass, abort]
           on_reject: abort
 
         - id: beta-cohort
@@ -736,7 +828,7 @@ steps:
             - p95 < threshold
             - marginal cost matches estimate
             - no critical UX confusion in feedback
-          options: [pass, fail]
+          options: [pass, abort]
           on_reject: abort
 
         - id: prod-gate
@@ -751,28 +843,28 @@ steps:
           type: prompt
           integration: "{{ inputs.integration }}"
           prompt: >-
-            Open a PR on platform-infra updating infra/overlays/production/
-            with the new image tag. Wait for ArgoCD prod sync.
+            Deploy the new build to production via the project's deploy
+            process. Wait for the deploy to settle.
 
         - id: rollout-10
           type: gate
-          message: "Flag ON for 10% of orgs. Observe 24h. Verify Grafana panels."
-          options: [pass, fail]
+          message: "Flag ON for 10% of tenants. Observe 24h. Verify dashboards."
+          options: [pass, abort]
           on_reject: abort
 
         - id: rollout-50
           type: gate
-          message: "Flag ON for 50% of orgs. Observe 24h."
-          options: [pass, fail]
+          message: "Flag ON for 50% of tenants. Observe 24h."
+          options: [pass, abort]
           on_reject: abort
 
         - id: rollout-100
           type: gate
-          message: "Flag ON for 100% of orgs. Observe 48h."
-          options: [pass, fail]
+          message: "Flag ON for 100% of tenants. Observe 48h."
+          options: [pass, abort]
           on_reject: abort
 
-      all-orgs:
+      all-tenants:
         - id: direct-deploy-warning
           type: gate
           message: >-
@@ -788,40 +880,41 @@ steps:
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: |
-      Generate Grafana dashboard JSON for "{{ inputs.feature_name }}":
-      - Volume (Mimir): per day, segmented by plan + org
-      - Latency p50/p95/p99 per tRPC procedure (Tempo)
-      - Error rate per procedure and error type (Loki + GlitchTip)
-      - Marginal cost (Postgres rows added, ClickHouse rows, Temporal
-        executions, BullMQ jobs)
+      Generate dashboard definitions for "{{ inputs.feature_name }}":
+      - Volume: per day, segmented by plan + tenant
+      - Latency p50/p95/p99 per endpoint
+      - Error rate per endpoint and error type
+      - Marginal cost (DB rows added, analytics rows, job executions)
       - Funnel if applicable (view → action → success)
       - J7 / J30 retention
-      Commit to platform-infra/grafana/dashboards/{{ inputs.feature_name }}.json
+      Commit them where the project's dashboards live (IaC/infra repo).
 
   - id: alerts
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: |
-      Generate alert rules for "{{ inputs.feature_name }}":
-      - error_rate > 1% over 15min
+      Generate alert rules for "{{ inputs.feature_name }}" — one per rollback
+      threshold in the spec, plus:
+      - error_rate > threshold over 15min
       - p95 > threshold over 15min
-      - GlitchTip new unique exception
-      - Temporal workflow failure rate > threshold
-      - BullMQ dead-letter queue > 0
+      - new unique exception in the error tracker
+      - background-job failure rate > threshold
+      - dead-letter queue > 0
       - volume == 0 (silent breakage)
-      Each alert links to a runbook under platform-infra/runbooks/.
-      Route to the correct Slack channel + PagerDuty if critical.
+      Each alert links to a runbook. COMMIT and PROVISION them — an alert
+      file that is authored but never deployed does not exist. Verify the
+      rules are live before closing this step.
 
   - id: docs
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: |
       Publish documentation for "{{ inputs.feature_name }}":
-      - User docs (Mintlify/Fumadocs) with up-to-date screenshots
-      - Internal runbook (debug, rollback, kill switch)
-      - ADR if a significant technical choice was made (e.g. Temporal vs BullMQ)
+      - User docs with up-to-date screenshots
+      - Internal runbook (debug, rollback, kill switch), linked from the alerts
+      - ADR if a significant technical choice was made
       - Update architecture diagram if new flow
-      - Update SDK changelog (release-please picks up Conventional Commits)
+      - Update the changelog
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 15 — Flag retirement & retro
@@ -831,10 +924,11 @@ steps:
     message: |
       Wait 2 weeks of stable 100% rollout (zero incident).
       Then open a cleanup PR:
-      - Remove the flag from code (pages, procedures, components)
-      - Remove the flag entry from the flag service
+      - Remove the flag from code (pages, endpoints, components)
+      - Remove the flag entry from the registry
       - Adapt tests (no more dual path)
-    options: [stable, not-yet]
+      Choose 'abort' to stop here and resume the workflow later.
+    options: [stable, abort]
     on_reject: abort
 
   - id: cleanup-pr
@@ -850,9 +944,9 @@ steps:
     prompt: |
       Run a short retro for "{{ inputs.feature_name }}":
       - What went well
-      - What slipped between RFC and production
+      - What slipped between RFC and production (compare verify-report.md
+        follow-ups against what actually got fixed)
       - Estimation vs actual (T-shirt size accuracy)
       - Patterns to extract into the feature template
-      Close the ticket with links: RFC PR, code PR, cleanup PR,
-      Grafana dashboard, alerts. Compare Phase 0 success metrics to
-      observed reality.
+      Close the ticket with links: RFC PR, code PR, cleanup PR, dashboards,
+      alerts. Compare Phase 0 success metrics to observed reality.

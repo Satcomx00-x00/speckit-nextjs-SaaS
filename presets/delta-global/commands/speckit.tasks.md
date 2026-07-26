@@ -115,7 +115,7 @@ Within each group, order by dependency (e.g. `get` before `create`).
 - Output DTO schemas: `<Feature>Dto`, `<Feature>ListDto`
 - Precise constraints: `.min`, `.max`, `.uuid()`, `.email()`, `.regex()` on every field
 - No `z.any()`, `z.unknown()`, `z.record(z.any())` — Biome will fail
-- `organizationId` absent from all input schemas
+- `{{ var.tenancy_column }}` absent from all input schemas
 - Export types and schemas from the package barrel
 
 **Acceptance criteria**:
@@ -134,17 +134,17 @@ Within each group, order by dependency (e.g. `get` before `create`).
 
 **What**:
 - `uuid().primaryKey().defaultRandom()` on `id`
-- `organizationId` FK → `organizations.id`, `onDelete` decision documented
+- `{{ var.tenancy_column }}` FK → `{{ var.tenant_table }}.id`, `onDelete` decision documented
 - `createdAt` / `updatedAt` with `timestamp({ withTimezone: true }).notNull().defaultNow()`
-- Index on `(organizationId, createdAt desc)` minimum
+- Index on `({{ var.tenancy_column }}, createdAt desc)` minimum
 - Additional composite indexes for frequent filter+sort patterns
 - `relations()` declared if joins are needed
 - Export `InferSelectModel` and `InferInsertModel` types
 - Add to `packages/db/src/schema/index.ts` barrel
-- Run `bun --filter @delta-global/db drizzle-kit generate`
+- Run `bun --filter {{ var.package_scope }}/db drizzle-kit generate`
 
 **Acceptance criteria**:
-- [ ] Every tenant-scoped table has `organizationId` column + index
+- [ ] Every tenant-scoped table has `{{ var.tenancy_column }}` column + index
 - [ ] Generated SQL contains no `NOT NULL` on existing table without a default
 - [ ] `drizzle-kit generate` produces clean output (no warnings)
 - [ ] Migration reviewed line-by-line before applying
@@ -176,10 +176,10 @@ Within each group, order by dependency (e.g. `get` before `create`).
 - `import 'server-only'` as the first non-comment line
 - `get<Feature>ById` — reads by id, org-scoped, Redis-cached + React `cache()`
 - `list<Feature>s` — cursor-based pagination, org-scoped, Redis-cached (first page)
-- `create<Feature>Record(data, organizationId)` — inserts + invalidates cache
+- `create<Feature>Record(data, {{ var.tenancy_column }})` — inserts + invalidates cache
 - `update<Feature>Record(id, orgId, data)` — updates + invalidates cache
 - `delete<Feature>Record(id, orgId)` — deletes + invalidates cache
-- Every read: `getSession()` → `assertMembership()` → DB query with `eq(table.organizationId, orgId)`
+- Every read: `getSession()` → `assertMembership()` → DB query with `eq(table.{{ var.tenancy_column }}, orgId)`
 - Cache key pattern: `<feature>:org:{orgId}:{id}` and `<feature>s:org:{orgId}`
 - Explicit column selection — no `SELECT *`
 - Sensitive fields excluded from returned rows
@@ -187,8 +187,8 @@ Within each group, order by dependency (e.g. `get` before `create`).
 
 **Acceptance criteria**:
 - [ ] `import 'server-only'` is the first non-comment line
-- [ ] Every query includes `eq(<featureSnake>.organizationId, orgId)` in `where`
-- [ ] `organizationId` is a required non-optional parameter on all write functions
+- [ ] Every query includes `eq(<featureSnake>.{{ var.tenancy_column }}, orgId)` in `where`
+- [ ] `{{ var.tenancy_column }}` is a required non-optional parameter on all write functions
 - [ ] Cache TTL set, invalidation calls present in all mutation functions
 - [ ] `bun run typecheck` passes
 
@@ -262,11 +262,11 @@ Within each group, order by dependency (e.g. `get` before `create`).
 
 **What**:
 - Wire `<featureCamel>Router` into `appRouter` in `apps/api/src/routers/index.ts`
-- `orgScopedProcedure` on every procedure — `organizationId` from session, NEVER from input
-- `.input(schema)` imported from `@delta-global/shared` — never inlined
+- `orgScopedProcedure` on every procedure — `{{ var.tenancy_column }}` from session, NEVER from input
+- `.input(schema)` imported from `{{ var.package_scope }}/shared` — never inlined
 - `.output(schema)` for typed SDK contracts
 - `.meta({ name: '<feature>.<action>' })` for OTel spans + structured logs
-- Feature flag check: `flagService.isEnabled('ff-<feature-slug>', ctx.organizationId)` → `FORBIDDEN`
+- Feature flag check: `flagService.isEnabled('ff-<feature-slug>', ctx.{{ var.tenancy_column }})` → `FORBIDDEN`
 - Role check: `can<Feature>(ctx.member.role, action)` → `FORBIDDEN`
 - Rate limit: `rl:<procedure>:{userId}` via ioredis before writes
 - `db.transaction()` for multi-table mutations
@@ -339,7 +339,7 @@ Within each group, order by dependency (e.g. `get` before `create`).
 **What**:
 - `page.tsx` — async RSC, `generateMetadata`, feature-flag guard, SDK `createCaller`
 - `loading.tsx` — skeleton matching final layout
-- `error.tsx` — GlitchTip capture + "Réessayer" button
+- `error.tsx` — GlitchTip capture + "{{ var.retry_label }}" button
 - Feature flag redirects to `/${workspace}` if OFF
 
 **Acceptance criteria**:
@@ -432,7 +432,7 @@ Within each group, order by dependency (e.g. `get` before `create`).
 **Acceptance criteria**:
 - [ ] All 6 quality gates exit 0
 - [ ] No `z.any` / `z.unknown` / `z.record(z.any)` in Zod schemas (Biome)
-- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
 - [ ] No raw SQL template literals outside migration files
 
 ---

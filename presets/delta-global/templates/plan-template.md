@@ -1,0 +1,274 @@
+# Implementation Plan: [FEATURE NAME]
+
+**Feature slug**: `[feature-name]`
+**Feature flag**: `ff-[feature-name]` (default: OFF)
+**Branch**: `feat/[feature-name]`
+**Date**: [DATE]
+**Spec**: [link to spec.md]
+**RFC PR**: [link — must be merged before implementation PR is opened]
+
+**Note**: This template is filled in by the `speckit.plan` command.
+
+---
+
+## Summary
+
+[Extract from feature spec: primary requirement + chosen technical approach in 2–3 sentences.]
+
+---
+
+## Stack Reference
+
+| Layer | Technology | Package / Path |
+|---|---|---|
+| Runtime | Bun + Turborepo | monorepo root |
+| API | Hono + tRPC v11 | `apps/api` |
+| Web | Next.js 15 (App Router) | `apps/web` |
+| DB schema | Drizzle ORM + Postgres | `packages/db` |
+| Zod contracts | Zod v3 | `packages/shared` |
+| Auth | BetterAuth | `apps/api/src/lib/auth` |
+| Cache | ioredis | `apps/api/src/lib/redis` |
+| Queue | BullMQ (fire-and-forget) | `apps/api/src/workers/` |
+| Durable async | Temporal | `packages/temporal-workflows` |
+| Observability | OpenTelemetry + Grafana + GlitchTip | platform-infra |
+| Deploy | ArgoCD + Kustomize | platform-infra |
+| Secrets | Infisical | env.ts + Infisical Operator |
+
+---
+
+## File Map
+
+```text
+packages/
+├── db/src/schema/[feature-name].ts          ← Drizzle table(s)
+├── shared/src/schemas/[feature-name].ts     ← Zod contracts + DTOs + error codes
+
+apps/api/src/
+├── routers/[feature-name].ts                ← tRPC procedures (orgScopedProcedure)
+├── dal/[feature-name].ts                    ← server-only reads/writes, ioredis cache
+├── services/[feature-name].ts               ← pure business logic, Result<T,E>
+├── workers/[feature-name].worker.ts         ← BullMQ worker (if background work)
+└── test/[feature-name]/
+    ├── dal.test.ts
+    ├── services.test.ts
+    └── procedures.test.ts
+
+packages/temporal-workflows/src/             ← (if Temporal workflow needed)
+├── workflows/[feature-name].ts
+└── activities/[feature-name].ts
+
+apps/web/
+├── app/(app)/[workspace]/[feature-name]/
+│   ├── page.tsx                             ← RSC, SDK createCaller, flag guard
+│   ├── loading.tsx                          ← Skeleton component
+│   └── error.tsx                           ← GlitchTip capture, {{ var.retry_label }}
+└── components/features/[feature-name]/
+    ├── Create[Feature]Form.tsx              ← react-hook-form + useMutation
+    ├── [Feature]List.tsx                    ← useQuery with initialData
+    ├── [Feature]ListSkeleton.tsx            ← aria-busy skeleton
+    └── index.ts                            ← barrel
+    tests/e2e/[feature-name]/
+    ├── happy.spec.ts
+    └── isolation.spec.ts                   ← @critical tenant isolation
+```
+
+---
+
+## Service Interaction Map
+
+> **Mandatory sweep.** One row per platform service with an explicit verdict.
+> "Not touched" requires a reason; a blank row is an incomplete RFC.
+
+| Service | Touched? | Interaction | Changes needed | If this service is down/slow |
+|---|---|---|---|---|
+| Web (`apps/web`, Next.js) | yes/no | [render / mutate] | [routes, components] | [degraded UX] |
+| API (`apps/api`, Hono+tRPC) | yes/no | [new/modified procedures] | [routers] | [error contract] |
+| Postgres (`packages/db`) | yes/no | [read / write / migrate] | [tables, indexes] | [failure behavior] |
+| Redis (ioredis) | yes/no | [cache / rate-limit / invalidate] | [keys, TTLs — must match §8] | [fallback to DB? stampede?] |
+| BullMQ workers | yes/no | [enqueue / consume] | [jobs] | [retry, DLQ, user impact] |
+| Temporal (`packages/temporal-workflows`) | yes/no | [start / signal / schedule] | [workflows, activities] | [replay/backlog behavior] |
+| ClickHouse (analytics) | yes/no | [emit events] | [event names] | [fire-and-forget — never blocks] |
+| External APIs (LLM, email, payment, …) | yes/no | [call, per provider] | [client, env.ts, Infisical] | **timeout / retry / fallback / cost cap — required** |
+| BetterAuth / session | yes/no | [role checks, org scope] | [guards] | [lockout behavior] |
+| Object storage | yes/no | [upload / serve] | [buckets, limits] | [failure behavior] |
+
+Rules:
+- Every "yes" row must be reflected in the numbered sections below and in
+  §11 Testing Plan — an interaction without a failure-mode test is
+  undeclared risk.
+- Every external-API row must name timeout, retry budget, fallback, and
+  marginal cost.
+
+---
+
+## 1. Drizzle Schema
+
+**Package**: `packages/db/src/schema/[feature-name].ts`
+
+| Table | Key columns | Indexes | Relations |
+|---|---|---|---|
+| `[feature_snake]` | `id uuid pk default random()`, `{{ var.tenancy_column }} uuid fk`, `…`, `createdAt`, `updatedAt` | `({{ var.tenancy_column }}, createdAt desc)` | `→ organizations` |
+
+**Migration notes**:
+- Forward-compatible: [yes — add-only / no — two-step required]
+- Rollback: flag OFF → behavior unchanged
+- `drizzle-kit generate` only — no handwritten SQL
+
+---
+
+## 2. Zod Contracts
+
+**Package**: `packages/shared/src/schemas/[feature-name].ts`
+
+| Schema | Kind | Used by |
+|---|---|---|
+| `Create[Feature]Input` | input | `[feature].create` |
+| `Update[Feature]Input` | input | `[feature].update` |
+| `Get[Feature]Input` | input | `[feature].get` |
+| `List[Feature]Input` | input | `[feature].list` |
+| `[Feature]Dto` | output | all queries |
+| `[Feature]ListDto` | output | list query |
+| `[Feature]ErrorCode` | const literal | procedures + services |
+
+---
+
+## 3. tRPC Procedures
+
+**File**: `apps/api/src/routers/[feature-name].ts`
+
+| Procedure | Type | Input | Output | Min role | Flag guard |
+|---|---|---|---|---|---|
+| `[feature].get` | query | `Get[Feature]Input` | `[Feature]Dto` | viewer | yes |
+| `[feature].list` | query | `List[Feature]Input` | `[Feature]ListDto` | viewer | yes |
+| `[feature].create` | mutation | `Create[Feature]Input` | `[Feature]Dto` | member | yes |
+| `[feature].update` | mutation | `Update[Feature]Input` | `[Feature]Dto` | member | yes |
+| `[feature].delete` | mutation | `Get[Feature]Input` | void | admin | yes |
+
+All use `orgScopedProcedure`. `{{ var.tenancy_column }}` from session — never from input.
+
+---
+
+## 4. DAL
+
+**File**: `apps/api/src/dal/[feature-name].ts`
+
+| Function | Cache key | Invalidated by |
+|---|---|---|
+| `get[Feature]ById` | `[feature]:org:{orgId}:{id}` TTL 5m | `update`, `delete` |
+| `list[Feature]s` | `[feature]s:org:{orgId}` TTL 5m | `create`, `update`, `delete` |
+| `create[Feature]Record` | — | invalidates list |
+| `update[Feature]Record` | — | invalidates one + list |
+| `delete[Feature]Record` | — | invalidates one + list |
+
+---
+
+## 5. Services
+
+**File**: `apps/api/src/services/[feature-name].ts`
+
+| Function | Returns | Purpose |
+|---|---|---|
+| `buildCreate[Feature]Payload` | `Result<DBPayload>` | validate + transform input |
+| `can[Feature]` | `boolean` | pure RBAC lookup |
+| `validate[Feature]State` | `Result<void>` | state machine guard |
+
+Zero infrastructure imports. `Result<T,E>` — no `throw` on business errors.
+
+---
+
+## 6. Feature Flag
+
+| Property | Value |
+|---|---|
+| Name | `ff-[feature-name]` |
+| Default | OFF |
+| Granularity | org |
+| Kill switch | < 5s |
+| Guard locations | Every tRPC procedure + RSC page.tsx |
+| Planned removal | [date] |
+
+---
+
+## 7. RBAC Matrix
+
+| Action | owner | admin | member | viewer |
+|---|---|---|---|---|
+| read | ✓ | ✓ | ✓ | ✓ |
+| create | ✓ | ✓ | ✓ | — |
+| update | ✓ | ✓ | ✓ | — |
+| delete | ✓ | ✓ | — | — |
+
+---
+
+## 8. Cache Strategy
+
+| Key | Data | TTL | Invalidated by |
+|---|---|---|---|
+| `[feature]:org:{orgId}:{id}` | Single DTO | 5m | update, delete |
+| `[feature]s:org:{orgId}` | List (first page) | 5m | create, update, delete |
+
+React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
+
+---
+
+## 9. Background Jobs
+
+| Effect | Tool | ID template | Trigger |
+|---|---|---|---|
+| [side effect description] | BullMQ / Temporal | `[feature]-{id}` | `[feature].create` mutation |
+
+---
+
+## 10. Observability Plan
+
+| Signal | Attribute | Tool |
+|---|---|---|
+| OTel span | `org.id`, `user.id`, `procedure.name` | Tempo |
+| Structured log | `{{ var.tenancy_column }}`, `userId`, `correlationId`, `durationMs` | Loki |
+| Analytics event | `[feature].created`, `[feature].updated` | ClickHouse only |
+| Error capture | GlitchTip `captureException` | error.tsx + catch |
+| Alert | error_rate > 1% / p95 > threshold | Grafana Alerting |
+
+---
+
+## 11. Testing Plan
+
+| Type | File | Tool | Critical |
+|---|---|---|---|
+| Unit (services) | `apps/api/test/[feature]/services.test.ts` | bun:test | — |
+| Integration (DAL) | `apps/api/test/[feature]/dal.test.ts` | bun:test + Testcontainers | cross-org isolation |
+| Integration (procedures) | `apps/api/test/[feature]/procedures.test.ts` | bun:test + Testcontainers | RBAC, idempotency |
+| E2E happy path | `apps/web/tests/e2e/[feature]/happy.spec.ts` | Playwright | — |
+| E2E @critical | `apps/web/tests/e2e/[feature]/isolation.spec.ts` | Playwright | **blocks merge** |
+
+---
+
+## 12. Security Checklist
+
+- [ ] `{{ var.tenancy_column }}` extracted from BetterAuth session — never from procedure input
+- [ ] Every DAL query includes `eq(table.{{ var.tenancy_column }}, orgId)` in `where`
+- [ ] RBAC checked via `can[Feature](ctx.member.role, action)` in every mutation
+- [ ] ioredis rate limit on writes: `rl:[feature].[action]:{userId}`
+- [ ] No raw SQL — `drizzle-kit generate` only
+- [ ] No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
+- [ ] Secrets via `env.ts` + Infisical
+- [ ] Sensitive fields absent from DTO schemas and cache values
+
+---
+
+## 13. Open Questions
+
+1. [Decision before implementation — e.g. "Soft-delete or hard-delete?"]
+2. [Decision before implementation]
+
+*(Delete if none.)*
+
+---
+
+## 14. Complexity Justification
+
+> Fill only if a hard constraint is intentionally violated.
+
+| Violation | Why needed | Simpler alternative rejected because |
+|---|---|---|
+| [e.g. raw SQL in migration] | [reason] | [why drizzle-kit generate was insufficient] |

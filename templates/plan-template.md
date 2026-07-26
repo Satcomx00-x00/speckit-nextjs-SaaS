@@ -7,7 +7,9 @@
 **Spec**: [link to spec.md]
 **RFC PR**: [link — must be merged before implementation PR is opened]
 
-**Note**: This template is filled in by the `speckit.plan` command.
+**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command. Stack rows
+and paths come from the project constitution (`.specify/memory/constitution.md`)
+and the installed preset — never invent a technology the project does not use.
 
 ---
 
@@ -19,116 +21,138 @@
 
 ## Stack Reference
 
+> Fill from the constitution / repo scan output. Delete rows that do not
+> apply to this project.
+
 | Layer | Technology | Package / Path |
 |---|---|---|
-| Runtime | Bun + Turborepo | monorepo root |
-| API | Hono + tRPC v11 | `apps/api` |
-| Web | Next.js 15 (App Router) | `apps/web` |
-| DB schema | Drizzle ORM + Postgres | `packages/db` |
-| Zod contracts | Zod v3 | `packages/shared` |
-| Auth | BetterAuth | `apps/api/src/lib/auth` |
-| Cache | ioredis | `apps/api/src/lib/redis` |
-| Queue | BullMQ (fire-and-forget) | `apps/api/src/workers/` |
-| Durable async | Temporal | `packages/temporal-workflows` |
-| Observability | OpenTelemetry + Grafana + GlitchTip | platform-infra |
-| Deploy | ArgoCD + Kustomize | platform-infra |
-| Secrets | Infisical | env.ts + Infisical Operator |
+| Runtime / package manager | [e.g. Node + pnpm, Bun] | [monorepo root] |
+| Web | Next.js (App Router) | [e.g. `apps/web` or repo root] |
+| API surface | [Server Actions / Route Handlers / tRPC / GraphQL] | [path] |
+| DB + ORM | [e.g. Postgres + Drizzle / Prisma] | [path] |
+| Validation | [e.g. Zod] | [path] |
+| Auth | [e.g. BetterAuth / Auth.js / Clerk] | [path] |
+| Cache | [e.g. Redis / Next.js cache only] | [path] |
+| Background jobs | [e.g. queue / workflow engine / none] | [path] |
+| Observability | [error tracking / tracing / metrics tools] | [path] |
+| Deploy | [e.g. Vercel / Kubernetes + GitOps] | [path] |
+| Secrets | [e.g. platform env vars / secret manager] | [path] |
 
 ---
 
 ## File Map
 
+> Concrete files this feature adds or touches, using this project's real layout.
+
 ```text
-packages/
-├── db/src/schema/[feature-name].ts          ← Drizzle table(s)
-├── shared/src/schemas/[feature-name].ts     ← Zod contracts + DTOs + error codes
+[db package]/schema/[feature-name].ts          ← table(s) / model(s)
+[shared package]/schemas/[feature-name].ts     ← validation contracts + DTOs + error codes
 
-apps/api/src/
-├── routers/[feature-name].ts                ← tRPC procedures (orgScopedProcedure)
-├── dal/[feature-name].ts                    ← server-only reads/writes, ioredis cache
-├── services/[feature-name].ts               ← pure business logic, Result<T,E>
-├── workers/[feature-name].worker.ts         ← BullMQ worker (if background work)
-└── test/[feature-name]/
-    ├── dal.test.ts
-    ├── services.test.ts
-    └── procedures.test.ts
+[api layer]/
+├── [feature-name] procedures / actions / handlers
+├── dal/[feature-name].ts                      ← server-only reads/writes, cache
+└── services/[feature-name].ts                 ← pure business logic, Result<T,E>
 
-packages/temporal-workflows/src/             ← (if Temporal workflow needed)
-├── workflows/[feature-name].ts
-└── activities/[feature-name].ts
+[web app]/
+├── app/.../[feature-name]/
+│   ├── page.tsx                               ← RSC, flag guard
+│   ├── loading.tsx                            ← skeleton
+│   └── error.tsx                              ← error boundary + capture
+└── components/features/[feature-name]/        ← client components
 
-apps/web/
-├── app/(app)/[workspace]/[feature-name]/
-│   ├── page.tsx                             ← RSC, SDK createCaller, flag guard
-│   ├── loading.tsx                          ← Skeleton component
-│   └── error.tsx                           ← GlitchTip capture, Réessayer
-└── components/features/[feature-name]/
-    ├── Create[Feature]Form.tsx              ← react-hook-form + useMutation
-    ├── [Feature]List.tsx                    ← useQuery with initialData
-    ├── [Feature]ListSkeleton.tsx            ← aria-busy skeleton
-    └── index.ts                            ← barrel
-    tests/e2e/[feature-name]/
-    ├── happy.spec.ts
-    └── isolation.spec.ts                   ← @critical tenant isolation
+[e2e dir]/[feature-name]/
+├── happy.spec.ts
+└── isolation.spec.ts                          ← @critical tenant/owner isolation
 ```
 
 ---
 
-## 1. Drizzle Schema
+## Service Interaction Map
 
-**Package**: `packages/db/src/schema/[feature-name].ts`
+> **Mandatory sweep.** One row per service in the Stack Reference — plus any
+> external API — with an explicit verdict. "Not touched" requires a reason;
+> a blank row is an incomplete plan, and `verify` will flag interactions in
+> code that were never declared here (and vice versa).
 
-| Table | Key columns | Indexes | Relations |
-|---|---|---|---|
-| `[feature_snake]` | `id uuid pk default random()`, `organizationId uuid fk`, `…`, `createdAt`, `updatedAt` | `(organizationId, createdAt desc)` | `→ organizations` |
+| Service | Touched? | Interaction | Changes needed | If this service is down/slow |
+|---|---|---|---|---|
+| Frontend (web app) | yes/no | [render / mutate / subscribe] | [components, routes] | [degraded UX behavior] |
+| API surface | yes/no | [new endpoints / modified] | [routers, actions] | [error contract] |
+| Database | yes/no | [read / write / migrate] | [tables, indexes] | [failure behavior] |
+| Cache | yes/no | [read / write / invalidate] | [keys, TTLs — must match §8] | [fallback to DB? stampede risk?] |
+| Background jobs / workers | yes/no | [enqueue / consume / schedule] | [jobs, workflows] | [retry policy, DLQ, user impact] |
+| External APIs (LLM, email, payment, …) | yes/no | [call, per provider] | [client, env vars, secrets] | **timeout / retry / fallback / cost cap — required** |
+| Auth / session | yes/no | [role checks, new scopes] | [guards] | [lockout behavior] |
+| Realtime (SSE / websockets / push) | yes/no | [emit / subscribe] | [channels, events] | [reconnect / missed-event behavior] |
+| Analytics / events | yes/no | [emit] | [event names] | [fire-and-forget — never blocks] |
+| File / object storage | yes/no | [upload / serve] | [buckets, limits] | [failure behavior] |
 
-**Migration notes**:
-- Forward-compatible: [yes — add-only / no — two-step required]
-- Rollback: flag OFF → behavior unchanged
-- `drizzle-kit generate` only — no handwritten SQL
+Rules:
+- Every "yes" row must be reflected in the numbered sections below (schema,
+  API, cache, jobs) and in the Testing Plan — an interaction without a test
+  for its failure mode is undeclared risk.
+- Every external-API row must name its timeout, retry budget, fallback
+  behavior, and marginal cost — "we call OpenAI" is not a plan.
+- Delete rows for services this project does not have; never leave a row
+  ambiguous.
 
 ---
 
-## 2. Zod Contracts
+## 1. Data Schema
 
-**Package**: `packages/shared/src/schemas/[feature-name].ts`
+**Location**: [db package]/schema/[feature-name].ts
+
+| Table / model | Key columns | Indexes | Relations |
+|---|---|---|---|
+| `[feature_snake]` | `id pk`, `[tenant key — e.g. organizationId / ownerId, per constitution]`, `…`, `createdAt`, `updatedAt` | `([tenant key], createdAt desc)` | [relations] |
+
+**Migration notes**:
+- Forward-compatible: [yes — add-only / no — expand-contract required]
+- Rollback: flag OFF → behavior unchanged
+- Generated migrations only — no handwritten SQL unless the constitution allows it
+
+---
+
+## 2. Validation Contracts
+
+**Location**: [shared package]/schemas/[feature-name].ts
 
 | Schema | Kind | Used by |
 |---|---|---|
-| `Create[Feature]Input` | input | `[feature].create` |
-| `Update[Feature]Input` | input | `[feature].update` |
-| `Get[Feature]Input` | input | `[feature].get` |
-| `List[Feature]Input` | input | `[feature].list` |
-| `[Feature]Dto` | output | all queries |
-| `[Feature]ListDto` | output | list query |
-| `[Feature]ErrorCode` | const literal | procedures + services |
+| `Create[Feature]Input` | input | create |
+| `Update[Feature]Input` | input | update |
+| `Get[Feature]Input` | input | get |
+| `List[Feature]Input` | input | list |
+| `[Feature]Dto` | output | all reads |
+| `[Feature]ListDto` | output | list |
+| `[Feature]ErrorCode` | const literal | API + services |
 
 ---
 
-## 3. tRPC Procedures
+## 3. API Surface
 
-**File**: `apps/api/src/routers/[feature-name].ts`
+> Server Actions, Route Handlers, or RPC procedures — whichever this project uses.
 
-| Procedure | Type | Input | Output | Min role | Flag guard |
+| Endpoint / action | Type | Input | Output | Min role | Flag guard |
 |---|---|---|---|---|---|
-| `[feature].get` | query | `Get[Feature]Input` | `[Feature]Dto` | viewer | yes |
-| `[feature].list` | query | `List[Feature]Input` | `[Feature]ListDto` | viewer | yes |
-| `[feature].create` | mutation | `Create[Feature]Input` | `[Feature]Dto` | member | yes |
-| `[feature].update` | mutation | `Update[Feature]Input` | `[Feature]Dto` | member | yes |
-| `[feature].delete` | mutation | `Get[Feature]Input` | void | admin | yes |
+| `[feature].get` | query | `Get[Feature]Input` | `[Feature]Dto` | [role] | yes |
+| `[feature].list` | query | `List[Feature]Input` | `[Feature]ListDto` | [role] | yes |
+| `[feature].create` | mutation | `Create[Feature]Input` | `[Feature]Dto` | [role] | yes |
+| `[feature].update` | mutation | `Update[Feature]Input` | `[Feature]Dto` | [role] | yes |
+| `[feature].delete` | mutation | `Get[Feature]Input` | void | [role] | yes |
 
-All use `orgScopedProcedure`. `organizationId` from session — never from input.
+Tenant key comes from the session — never from client input.
 
 ---
 
 ## 4. DAL
 
-**File**: `apps/api/src/dal/[feature-name].ts`
+**Location**: [api layer]/dal/[feature-name].ts
 
 | Function | Cache key | Invalidated by |
 |---|---|---|
-| `get[Feature]ById` | `[feature]:org:{orgId}:{id}` TTL 5m | `update`, `delete` |
-| `list[Feature]s` | `[feature]s:org:{orgId}` TTL 5m | `create`, `update`, `delete` |
+| `get[Feature]ById` | `[feature]:[tenant]:{tenantId}:{id}` TTL [ttl] | update, delete |
+| `list[Feature]s` | `[feature]s:[tenant]:{tenantId}` TTL [ttl] | create, update, delete |
 | `create[Feature]Record` | — | invalidates list |
 | `update[Feature]Record` | — | invalidates one + list |
 | `delete[Feature]Record` | — | invalidates one + list |
@@ -137,12 +161,12 @@ All use `orgScopedProcedure`. `organizationId` from session — never from input
 
 ## 5. Services
 
-**File**: `apps/api/src/services/[feature-name].ts`
+**Location**: [api layer]/services/[feature-name].ts
 
 | Function | Returns | Purpose |
 |---|---|---|
 | `buildCreate[Feature]Payload` | `Result<DBPayload>` | validate + transform input |
-| `can[Feature]` | `boolean` | pure RBAC lookup |
+| `can[Feature]` | `boolean` | pure authorization lookup |
 | `validate[Feature]State` | `Result<void>` | state machine guard |
 
 Zero infrastructure imports. `Result<T,E>` — no `throw` on business errors.
@@ -153,18 +177,21 @@ Zero infrastructure imports. `Result<T,E>` — no `throw` on business errors.
 
 | Property | Value |
 |---|---|
-| Name | `ff-[feature-name]` |
+| Name | `ff-[feature-name]` (follow the project's registry naming exactly) |
+| Registered in | [path to the project's flag registry — the key MUST exist there before merge] |
 | Default | OFF |
-| Granularity | org |
-| Kill switch | < 5s |
-| Guard locations | Every tRPC procedure + RSC page.tsx |
+| Granularity | [global / tenant / user / percentage — must be supported by the project's flag system] |
+| Kill switch | [propagation time] |
+| Guard locations | Every API entry point + RSC page.tsx |
 | Planned removal | [date] |
 
 ---
 
-## 7. RBAC Matrix
+## 7. Authorization Matrix
 
-| Action | owner | admin | member | viewer |
+> Use this project's real role set (from the constitution), not a canned one.
+
+| Action | [role 1] | [role 2] | [role 3] | [role 4] |
 |---|---|---|---|---|
 | read | ✓ | ✓ | ✓ | ✓ |
 | create | ✓ | ✓ | ✓ | — |
@@ -177,30 +204,34 @@ Zero infrastructure imports. `Result<T,E>` — no `throw` on business errors.
 
 | Key | Data | TTL | Invalidated by |
 |---|---|---|---|
-| `[feature]:org:{orgId}:{id}` | Single DTO | 5m | update, delete |
-| `[feature]s:org:{orgId}` | List (first page) | 5m | create, update, delete |
+| `[feature]:[tenant]:{tenantId}:{id}` | Single DTO | [ttl] | update, delete |
+| `[feature]s:[tenant]:{tenantId}` | List (first page) | [ttl] | create, update, delete |
 
-React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
+**Blast radius**: state explicitly what one write invalidates. A single-item
+mutation must not evict a cache shared by all users/tenants.
 
 ---
 
 ## 9. Background Jobs
 
-| Effect | Tool | ID template | Trigger |
+| Effect | Tool | ID template (idempotent) | Trigger |
 |---|---|---|---|
-| [side effect description] | BullMQ / Temporal | `[feature]-{id}` | `[feature].create` mutation |
+| [side effect description] | [project's queue/workflow tool] | `[feature]-{id}` | [mutation] |
 
 ---
 
 ## 10. Observability Plan
 
-| Signal | Attribute | Tool |
+> Every row here must be VERIFIABLE after implement — `__SPECKIT_COMMAND_VERIFY__` will
+> check that these signals are actually emitted, not just planned.
+
+| Signal | Attribute / name | Tool |
 |---|---|---|
-| OTel span | `org.id`, `user.id`, `procedure.name` | Tempo |
-| Structured log | `organizationId`, `userId`, `correlationId`, `durationMs` | Loki |
-| Analytics event | `[feature].created`, `[feature].updated` | ClickHouse only |
-| Error capture | GlitchTip `captureException` | error.tsx + catch |
-| Alert | error_rate > 1% / p95 > threshold | Grafana Alerting |
+| Span / timing | `[tenant].id`, `user.id`, endpoint name | [tracing tool] |
+| Structured log | tenant id, user id, correlation id, durationMs | [log tool] |
+| Analytics event | `[feature].created`, `[feature].updated` | [analytics sink] |
+| Error capture | captureException | error.tsx + catch |
+| Alert | error_rate / p95 thresholds from spec Rollback Thresholds | [alerting tool] |
 
 ---
 
@@ -208,24 +239,23 @@ React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
 
 | Type | File | Tool | Critical |
 |---|---|---|---|
-| Unit (services) | `apps/api/test/[feature]/services.test.ts` | bun:test | — |
-| Integration (DAL) | `apps/api/test/[feature]/dal.test.ts` | bun:test + Testcontainers | cross-org isolation |
-| Integration (procedures) | `apps/api/test/[feature]/procedures.test.ts` | bun:test + Testcontainers | RBAC, idempotency |
-| E2E happy path | `apps/web/tests/e2e/[feature]/happy.spec.ts` | Playwright | — |
-| E2E @critical | `apps/web/tests/e2e/[feature]/isolation.spec.ts` | Playwright | **blocks merge** |
+| Unit (services) | [test dir]/[feature]/services.test.ts | [test runner] | — |
+| Integration (DAL) | [test dir]/[feature]/dal.test.ts | [test runner + real DB] | cross-tenant isolation |
+| Integration (API) | [test dir]/[feature]/procedures.test.ts | [test runner + real DB] | authorization, idempotency |
+| E2E happy path | [e2e dir]/[feature]/happy.spec.ts | [e2e tool] | — |
+| E2E @critical | [e2e dir]/[feature]/isolation.spec.ts | [e2e tool] | **blocks merge** |
 
 ---
 
 ## 12. Security Checklist
 
-- [ ] `organizationId` extracted from BetterAuth session — never from procedure input
-- [ ] Every DAL query includes `eq(table.organizationId, orgId)` in `where`
-- [ ] RBAC checked via `can[Feature](ctx.member.role, action)` in every mutation
-- [ ] ioredis rate limit on writes: `rl:[feature].[action]:{userId}`
-- [ ] No raw SQL — `drizzle-kit generate` only
-- [ ] No `@delta-global/analytics-db` imports in `apps/api` or `apps/web`
-- [ ] Secrets via `env.ts` + Infisical
-- [ ] Sensitive fields absent from DTO schemas and cache values
+- [ ] Tenant key extracted from the server session — never from client input
+- [ ] Every DAL query filters by the tenant key in `where`
+- [ ] Authorization checked in every mutation (`can[Feature](role, action)` or equivalent)
+- [ ] Rate limit on writes: `rl:[feature].[action]:{userId}`
+- [ ] Generated migrations only — no handwritten SQL unless constitution allows
+- [ ] Secrets via the project's validated env module — no bare `process.env`
+- [ ] Sensitive fields absent from DTO schemas, cache values, and log/span attributes
 
 ---
 
@@ -244,4 +274,4 @@ React Query keys align with server cache: `[['[featureCamel]', 'list'], ...]`.
 
 | Violation | Why needed | Simpler alternative rejected because |
 |---|---|---|
-| [e.g. raw SQL in migration] | [reason] | [why drizzle-kit generate was insufficient] |
+| [violation] | [reason] | [why the constrained path was insufficient] |

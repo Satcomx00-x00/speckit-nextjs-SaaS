@@ -3,14 +3,16 @@ schema_version: "1.0"
 workflow:
   id: "migration-only"
   name: "DB Migration Delivery"
-  version: "1.0.0"
+  version: "1.2.0"
   author: "satcom"
   description: >-
-    Safe path for schema-only changes to the Delta-Global stack. Designed for
-    migrations that are too substantial for the hotfix workflow (adding tables,
-    dropping columns, backfills, index changes on large tables).
-    Enforces SQL review gates before every apply step.
-    Do NOT use for: new features (use saas-feature), bug fixes without schema changes (use hotfix).
+    Safe path for schema-only changes. Designed for migrations too substantial
+    for the hotfix workflow (adding tables, dropping columns, backfills, index
+    changes on large tables). Models expand-contract explicitly, enforces SQL
+    review gates before every apply step, and records every data migration in
+    a migration-record artifact.
+    Do NOT use for: new features (use saas-feature), bug fixes without schema
+    changes (use hotfix). Tool commands are inputs with defaults.
 
 requires:
   speckit_version: ">=0.7.2"
@@ -39,8 +41,8 @@ inputs:
     enum: ["additive", "destructive", "backfill", "index"]
     prompt: >-
       Migration type:
-      additive (new table / add nullable column / add index CONCURRENTLY),
-      destructive (two-step drop: already soft-removed column or table),
+      additive (expand phase: new table / add nullable column / add index CONCURRENTLY),
+      destructive (contract phase of expand-contract: the app no longer references the column/table),
       backfill (fill data in existing column),
       index (add/drop index on existing table)
 
@@ -52,8 +54,8 @@ inputs:
 
   integration:
     type: string
-    default: "claude"
-    prompt: "AI coding integration to use (claude, copilot, gemini)"
+    default: "auto"
+    prompt: "AI coding integration to use (auto, claude, copilot, gemini)"
 
   needs_backfill_script:
     type: boolean
@@ -69,9 +71,49 @@ inputs:
       maintenance-window (low-traffic window, apply + restart together),
       online (zero-downtime: migration runs while app is live, no restart required)
 
+  db_schema_dir:
+    type: string
+    default: "packages/db/src/schema"
+    prompt: "Directory holding the ORM schema files"
+
+  migrations_dir:
+    type: string
+    default: "packages/db/drizzle"
+    prompt: "Directory holding generated migration files"
+
+  lint_cmd:
+    type: string
+    default: "bun run lint"
+    prompt: "Lint command"
+
+  typecheck_cmd:
+    type: string
+    default: "bun run typecheck"
+    prompt: "Typecheck command"
+
+  build_cmd:
+    type: string
+    default: "turbo run build --filter=...[HEAD^1]"
+    prompt: "Build command for affected packages"
+
+  secretscan_cmd:
+    type: string
+    default: "gitleaks detect --no-banner"
+    prompt: "Secret scan command"
+
+  migrate_generate_cmd:
+    type: string
+    default: "bun --filter @delta-global/db drizzle-kit generate"
+    prompt: "Command that generates a migration from the schema"
+
+  migrate_apply_cmd:
+    type: string
+    default: "bun --filter @delta-global/db drizzle-kit migrate"
+    prompt: "Command that applies migrations locally"
+
 steps:
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 0 — Scope the migration
+  # PHASE 0 — Scope the migration (expand-contract analysis)
   # ──────────────────────────────────────────────────────────────────
   - id: scope
     command: speckit.specify
@@ -86,23 +128,29 @@ steps:
         TABLE SIZE: {{ inputs.table_size }}
 
         Produce a concise migration scope:
-        - Exact Drizzle schema changes needed (file paths + column/table names)
-        - Forward-compatibility analysis:
-            additive → always safe
-            destructive → confirm two-step plan (app no longer writes old column before this migration runs)
-            backfill → confirm idempotency strategy
-            index → CONCURRENTLY required if table > 100k rows
+        - Exact schema changes needed (file paths + column/table names)
+        - Expand-contract placement — which phase is this migration?
+            additive → EXPAND (always forward-compatible)
+            backfill → DUAL-WRITE/BACKFILL (must be idempotent + verifiable)
+            destructive → CONTRACT (prove the expand + migrate phases completed:
+              cite the PRs/dates when the app stopped referencing the old shape)
+            index → independent (CONCURRENTLY required if table > 100k rows)
+        - Consistency verification plan for backfills (what query proves
+          old and new shapes agree before contract?)
         - Estimated migration duration (based on table size)
         - Rollback plan: what SQL undoes this migration? (keep it runnable)
+          If irreversible (e.g. data-destroying DROP), say IRREVERSIBLE
+          explicitly and require sign-off.
         - Zero-downtime check: can the app run with both old and new schema simultaneously?
-        - CNPG operator impact: will the migration trigger a pod restart?
+        - Operational impact: will the apply trigger an app restart?
 
         Hard constraints — do NOT expand scope:
         - No application code changes in this workflow (open a saas-feature PR for those)
-        - No NOT NULL on an existing column without a safe default or two-step plan
+        - No NOT NULL on an existing column without a safe default or expand-contract plan
         - No DROP without confirming the application no longer references the column/table
-        - No handwritten SQL — drizzle-kit generate only (except for index CONCURRENTLY — see Phase 2)
-        - No schema changes to analytics-db from this workflow
+        - No handwritten SQL — generated migrations only (except the index
+          CONCURRENTLY patch — see Phase 3)
+        - No schema changes to the analytics store from this workflow
 
   - id: review-scope
     type: gate
@@ -110,12 +158,15 @@ steps:
       Review the migration scope before writing any code.
       Confirm:
       - Migration type is correctly identified ({{ inputs.migration_type }})
+      - Expand-contract placement is correct — a CONTRACT migration must cite
+        the completed EXPAND evidence
       - Forward-compatibility verified — app can run on both old and new schema
-      - Rollback plan is clear and reversible
+      - Rollback plan is clear (or IRREVERSIBLE is explicitly signed off)
       - No scope creep into application code
-      - CNPG restart impact is understood
+      - Restart impact is understood
+      Choose 'reject' if more investigation is needed.
       Table size: {{ inputs.table_size }} | Strategy: {{ inputs.rollout_strategy }}
-    options: [approve, needs-more-investigation]
+    options: [approve, reject]
     on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
@@ -123,7 +174,7 @@ steps:
   # ──────────────────────────────────────────────────────────────────
   - id: branch
     type: shell
-    command: "git checkout main && git pull && git checkout -b migration/{{ inputs.affected_tables | replace(', ', '-') | replace(',', '-') }}"
+    run: "git checkout main && git pull && git checkout -b migration/{{ inputs.affected_tables | replace(', ', '-') | replace(',', '-') }}"
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 2 — Implement the schema change
@@ -133,33 +184,33 @@ steps:
     integration: "{{ inputs.integration }}"
     input:
       args: |
-        Implement the Drizzle schema change:
+        Implement the schema change:
 
         CHANGE: {{ inputs.migration_description }}
         TYPE: {{ inputs.migration_type }}
         AFFECTED TABLES: {{ inputs.affected_tables }}
 
         Rules:
-        - Edit only files in packages/db/src/schema/
-        - uuid().primaryKey().defaultRandom() on any new table id
-        - organizationId FK + index on any new tenant-scoped table
-        - timestamps with withTimezone: true
-        - drizzle-kit generate only — no handwritten SQL
+        - Edit only files in {{ inputs.db_schema_dir }}/
+        - Primary keys per project convention on any new table
+        - Tenant-key FK + index on any new tenant-scoped table
+        - Timestamps with timezone
+        - Generated migrations only — no handwritten SQL
         - Forward-compatible: no NOT NULL on existing column without default
-        - No DROP without a documented two-step plan already in progress
+        - No DROP without a documented expand-contract plan already in progress
 
         For destructive migrations (type == destructive):
         - Confirm via code search that no application code references the column/table
         - Only then add the DROP to the schema
 
         For index migrations (type == index):
-        - Drizzle generates the CREATE INDEX statement
-        - If table_size is medium or large: note that drizzle-kit will generate a standard
-          CREATE INDEX; we will patch it to CONCURRENTLY in Phase 3 for safety
+        - The ORM generates the CREATE INDEX statement
+        - If table_size is medium or large: note that the generated SQL will be
+          patched to CONCURRENTLY in Phase 3 for safety
 
   - id: migration-generate
     type: shell
-    command: "bun --filter @delta-global/db drizzle-kit generate"
+    run: "{{ inputs.migrate_generate_cmd }}"
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 3 — Patch for CONCURRENTLY (large tables, index type only)
@@ -173,16 +224,16 @@ steps:
         integration: "{{ inputs.integration }}"
         input:
           args: |
-            The drizzle-kit generated migration SQL contains a CREATE INDEX statement on a
-            {{ inputs.table_size }} table. Patch it to use CREATE INDEX CONCURRENTLY so the
-            migration does not hold an exclusive lock.
+            The generated migration SQL contains a CREATE INDEX statement on a
+            {{ inputs.table_size }} table. Patch it to use CREATE INDEX CONCURRENTLY
+            so the migration does not hold an exclusive lock.
 
             Rules:
-            - Find the generated SQL file in packages/db/drizzle/
+            - Find the generated SQL file in {{ inputs.migrations_dir }}/
             - Replace `CREATE INDEX` with `CREATE INDEX CONCURRENTLY`
             - CONCURRENTLY cannot run inside a transaction; ensure the migration file wraps
-              the index creation outside any BEGIN/COMMIT block (add `-- disable-transaction` comment
-              per drizzle-kit convention if supported, otherwise document this in the PR)
+              the index creation outside any BEGIN/COMMIT block (use the ORM's
+              disable-transaction convention if supported, otherwise document this in the PR)
             - Do not alter any other part of the migration file
 
   # ──────────────────────────────────────────────────────────────────
@@ -203,13 +254,14 @@ steps:
             AFFECTED TABLES: {{ inputs.affected_tables }}
 
             Rules:
-            - Place in packages/db/scripts/backfill-<migration-name>.ts
-            - Use Drizzle ORM — no raw SQL
+            - Place next to the migrations (e.g. scripts/backfill-<migration-name>.ts)
+            - Use the ORM — no raw SQL
             - Process in batches of 1000 rows with explicit cursor pagination (no OFFSET)
             - Idempotent: safe to run multiple times (use WHERE new_column IS NULL pattern)
             - Log progress: rows processed, batches complete, duration
             - Dry-run mode: accept --dry-run flag that logs but does not write
-            - Include organizationId in every WHERE clause (tenant-scoped tables only)
+            - Include the tenant key in every WHERE clause (tenant-scoped tables only)
+            - Emit a consistency check at the end: COUNT of rows still unpopulated
             - Hard limit: never update more than 500k rows in a single execution without checkpoint
 
       - id: review-backfill
@@ -219,8 +271,9 @@ steps:
           Confirm:
           - Idempotent (safe to re-run)
           - Batch size is reasonable for table size ({{ inputs.table_size }})
-          - organizationId present in WHERE (tenant-scoped tables)
+          - Tenant key present in WHERE (tenant-scoped tables)
           - Dry-run flag works
+          - Consistency check present
           - No raw SQL
         options: [approve, reject]
         on_reject: abort
@@ -235,12 +288,12 @@ steps:
 
       Checklist:
       - [ ] No NOT NULL added to an existing column without a safe DEFAULT
-      - [ ] No DROP TABLE / DROP COLUMN without two-step plan already complete
+      - [ ] No DROP TABLE / DROP COLUMN without expand-contract already complete
       - [ ] No TRUNCATE
       - [ ] Index on large table uses CONCURRENTLY (table_size: {{ inputs.table_size }})
       - [ ] Estimated lock duration is acceptable ({{ inputs.rollout_strategy }})
       - [ ] Migration is idempotent when possible (IF NOT EXISTS / IF EXISTS)
-      - [ ] Rollback SQL is documented in the PR description
+      - [ ] Rollback SQL is documented in the PR description (or IRREVERSIBLE signed off)
       - [ ] No handwritten DML (INSERT/UPDATE/DELETE) — use backfill script instead
 
       Migration type: {{ inputs.migration_type }}
@@ -248,54 +301,82 @@ steps:
       Strategy: {{ inputs.rollout_strategy }}
     options: [approve, reject]
     on_reject: abort
+    check: "git status --porcelain {{ inputs.migrations_dir }} | grep -q ."
+    on_check_fail: warn
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 6 — Apply locally
   # ──────────────────────────────────────────────────────────────────
   - id: migration-apply-local
     type: shell
-    command: "bun --filter @delta-global/db drizzle-kit migrate"
-
-  - id: verify-local
-    type: shell
-    command: "bun --filter @delta-global/db drizzle-kit studio --port 4983 &"
+    run: "{{ inputs.migrate_apply_cmd }}"
 
   - id: verify-local-gate
     type: gate
     message: |
-      Drizzle Studio is running on http://localhost:4983
-      Verify the local database schema looks correct:
+      Inspect the local database (e.g. the ORM's studio/inspector or psql)
+      and verify the schema looks correct:
       - New tables / columns present with correct types
       - Indexes created
       - Foreign keys correct
       - No unexpected side effects
-    options: [looks-good, something-is-wrong]
+    options: [looks-good, abort]
     on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 7 — Quality gates
   # ──────────────────────────────────────────────────────────────────
-  - id: quality-gates
-    type: fan-out
-    over:
-      - { name: "biome",     cmd: "bun run lint" }
-      - { name: "typecheck", cmd: "bun run typecheck" }
-      - { name: "build",     cmd: "turbo run build --filter=...[HEAD^1]" }
-      - { name: "gitleaks",  cmd: "gitleaks detect --no-banner" }
-    step:
-      type: shell
-      command: "{{ item.cmd }}"
+  - id: quality-lint
+    type: shell
+    run: "{{ inputs.lint_cmd }}"
 
-  - id: quality-aggregate
-    type: fan-in
-    from: quality-gates
-    aggregate: >-
-      All quality gates must return exit code 0. Report which gate failed
-      and abort if any did.
+  - id: quality-typecheck
+    type: shell
+    run: "{{ inputs.typecheck_cmd }}"
+
+  - id: quality-build
+    type: shell
+    run: "{{ inputs.build_cmd }}"
+
+  - id: quality-secretscan
+    type: shell
+    run: "{{ inputs.secretscan_cmd }}"
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE 8 — PR
+  # PHASE 8 — Verify + migration record + PR
   # ──────────────────────────────────────────────────────────────────
+  - id: verify
+    command: speckit.verify
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        Verify the migration for "{{ inputs.affected_tables }}" with evidence:
+        - Migration file exists in {{ inputs.migrations_dir }} and applied
+          cleanly to the local database (re-run apply, record output)
+        - Schema shape matches the scope (probe the local DB, not the ORM file)
+        - For backfill: dry-run executed, consistency check query recorded
+        - Rollback SQL from the scope actually parses/runs against a throwaway
+          database, or is explicitly marked IRREVERSIBLE with sign-off
+        Write verify-report.md in the migration's spec directory.
+
+  - id: migration-record
+    type: prompt
+    integration: "{{ inputs.integration }}"
+    prompt: |
+      Create the migration record at docs/database/migration-records/<ISO date>-{{ inputs.affected_tables | replace(', ', '-') | replace(',', '-') }}.md:
+
+      # Migration record: {{ inputs.migration_description }}
+      - Type: {{ inputs.migration_type }} (expand-contract phase: <expand|backfill|contract|index>)
+      - Affected tables: {{ inputs.affected_tables }} ({{ inputs.table_size }})
+      - Motivation: {{ inputs.motivation }}
+      - Migration file(s): <paths in {{ inputs.migrations_dir }}>
+      - Backfill script: <path or n/a>
+      - Rollback SQL: <runnable SQL or IRREVERSIBLE + sign-off name>
+      - Pre-apply snapshot: <row counts / aggregates of affected tables, per environment>
+      - Applied: local <date> | staging <date + verified-by> | production <date + verified-by>
+        (update this section at each apply step — this is the authoritative
+        record of what ran where)
+
   - id: pr-description
     type: prompt
     integration: "{{ inputs.integration }}"
@@ -311,9 +392,12 @@ steps:
       Include:
       - Conventional Commit title: feat(db): <short description> OR fix(db): <short description>
       - What changed (exact tables/columns/indexes)
-      - Why this change is forward-compatible (app can run on both old and new schema simultaneously)
+      - Expand-contract phase and evidence (for contract: when did the app stop
+        referencing the old shape?)
+      - Why this change is forward-compatible (app can run on both old and new schema)
       - Estimated migration duration and lock impact
-      - Rollback plan: exact SQL to undo the migration
+      - Rollback plan: exact SQL to undo the migration (or IRREVERSIBLE + sign-off)
+      - Link to the migration record file
       - Apply order for {{ inputs.rollout_strategy }} strategy:
           maintenance-window: "merge → staging apply → verify → prod apply (during maintenance window)"
           online: "merge → staging apply (live) → verify 24h → prod apply (live)"
@@ -331,6 +415,8 @@ steps:
       Do not merge until CI is green.
     options: [approve, reject]
     on_reject: abort
+    check: "git status --porcelain docs/database/migration-records/ 2>/dev/null | grep -q . || ls docs/database/migration-records/ 2>/dev/null | grep -q ."
+    on_check_fail: warn
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 9 — Deploy to staging
@@ -339,22 +425,22 @@ steps:
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: >-
-      Open a PR on platform-infra updating infra/overlays/staging/ with the
-      new image tag for the db package. Wait for ArgoCD staging sync.
-      Confirm CNPG migration job ran before the app pod restarted.
-      Check CNPG pod logs to confirm migration completed without errors.
+      Deploy to staging via the project's deploy process. Confirm the
+      migration job ran before the app pods restarted, and check the
+      migration logs for errors. Update the migration record's Applied
+      section (staging).
 
   - id: verify-staging
     type: gate
     message: |
       Verify the migration on staging:
-      - CNPG migration logs show success (no errors, no timeouts)
-      - App pods healthy after restart
+      - Migration logs show success (no errors, no timeouts)
+      - App instances healthy after restart
       - Run a quick smoke test on affected features
-      - No new GlitchTip errors since deploy
-      - Loki logs show clean startup
+      - No new errors in the error tracker since deploy
+      - Startup logs clean
       - For backfill: run backfill script in dry-run mode on staging, verify row count
-    options: [verified, failed]
+    options: [verified, abort]
     on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
@@ -368,20 +454,19 @@ steps:
         type: prompt
         integration: "{{ inputs.integration }}"
         prompt: >-
-          Run the backfill script on staging:
-          bun packages/db/scripts/backfill-<migration-name>.ts
-
+          Run the backfill script on staging (dry-run first, then live).
           Monitor progress logs. Confirm all rows processed.
           Run a second time to verify idempotency (should process 0 rows).
+          Record row counts in the migration record.
 
       - id: verify-backfill-staging
         type: gate
         message: |
           Verify backfill on staging:
-          - All target rows populated (query COUNT of NULL values on new column = 0)
+          - All target rows populated (consistency check: COUNT of NULL values on new column = 0)
           - Re-run is idempotent (0 rows updated on second run)
           - No performance impact observed
-        options: [verified, failed]
+        options: [verified, abort]
         on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
@@ -395,7 +480,7 @@ steps:
 
       Migration type: {{ inputs.migration_type }}
       Strategy: {{ inputs.rollout_strategy }}
-      Rollback: run the rollback SQL documented in the PR description.
+      Rollback: run the rollback SQL from the migration record.
 
       For maintenance-window: confirm maintenance window is active before proceeding.
       For online: migration will run live — verify app is forward-compatible.
@@ -406,10 +491,10 @@ steps:
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: >-
-      Open a PR on platform-infra updating infra/overlays/production/ with the
-      new image tag. Wait for ArgoCD prod sync.
-      Confirm CNPG migration job ran successfully before app pod restart.
-      Check CNPG pod logs to confirm migration completed without errors.
+      Deploy to production via the project's deploy process. Confirm the
+      migration job ran successfully before the app served traffic, and
+      check migration logs. Update the migration record's Applied section
+      (production).
 
   # ──────────────────────────────────────────────────────────────────
   # PHASE 12 — Backfill on production (conditional)
@@ -422,21 +507,19 @@ steps:
         type: prompt
         integration: "{{ inputs.integration }}"
         prompt: >-
-          Run the backfill script on production:
-          bun packages/db/scripts/backfill-<migration-name>.ts
-
-          Monitor progress carefully. Use dry-run first, then confirm before live run.
-          Watch for lock contention or slow queries in Grafana during execution.
+          Run the backfill script on production. Dry-run first, then confirm
+          before the live run. Watch for lock contention or slow queries
+          during execution. Record row counts in the migration record.
 
       - id: verify-backfill-prod
         type: gate
         message: |
           Verify backfill on production:
-          - All target rows populated (COUNT NULL = 0)
+          - All target rows populated (consistency check passes)
           - Re-run is idempotent
           - No spike in error rate or latency during backfill
-          - Grafana shows no lock contention
-        options: [verified, failed]
+          - No lock contention observed
+        options: [verified, abort]
         on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
@@ -446,13 +529,13 @@ steps:
     type: gate
     message: |
       Monitor production for 30 minutes after migration apply:
-      - CNPG pod logs: no errors
-      - App pods: all healthy, no crash loops
-      - GlitchTip: zero new errors related to affected tables
-      - Grafana: p95 latency normal, error rate at baseline
+      - Migration logs: no errors
+      - App instances: all healthy, no crash loops
+      - Error tracker: zero new errors related to affected tables
+      - p95 latency normal, error rate at baseline
       - DB metrics: no unusual lock waits, normal query times on affected tables
-      Rollback is available: see PR description for rollback SQL.
-    options: [stable, rollback-needed]
+      Rollback is available: see the migration record for rollback SQL.
+    options: [stable, abort]
     on_reject: abort
 
   # ──────────────────────────────────────────────────────────────────
@@ -462,22 +545,25 @@ steps:
     type: prompt
     integration: "{{ inputs.integration }}"
     prompt: |
-      Document the migration for future reference:
+      Finalize documentation for the migration:
 
       CHANGE: {{ inputs.migration_description }}
       TYPE: {{ inputs.migration_type }}
       AFFECTED TABLES: {{ inputs.affected_tables }}
 
-      Update or create:
-      1. docs/database/schema-changelog.md — append an entry:
-         ## [DATE] {{ inputs.migration_type }}: {{ inputs.affected_tables }}
-         - What changed
-         - Why
-         - PR link
-         - Rollback SQL
+      1. Verify the migration record is complete (all Applied rows filled,
+         final row counts recorded).
 
-      2. If a new table was added: update docs/database/schema-overview.md
+      2. docs/database/schema-changelog.md — append an entry:
+         ## [DATE] {{ inputs.migration_type }}: {{ inputs.affected_tables }}
+         - What changed / why / PR link / migration record link / rollback SQL
+
+      3. If a new table was added: update docs/database/schema-overview.md
          with a brief description of the new table and its purpose.
 
-      Keep entries concise. This log is for future engineers running migrations
-      or debugging data issues.
+      4. If this was an EXPAND migration that expects a later CONTRACT:
+         create a follow-up entry (issue or follow-ups.md) with the earliest
+         contract date and the verification query that must pass first.
+
+      Keep entries concise. This log is for future engineers running
+      migrations or debugging data issues.

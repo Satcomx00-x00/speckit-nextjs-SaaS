@@ -12,6 +12,16 @@ preset:
 requires:
   speckit_version: ">=0.6.0"
 
+# Resolved at install time into the installed copy. Override per project in
+# .specify/preset-variables.yml (scoped under this preset's id or flat).
+variables:
+  tenancy_model:
+    default: "org-scoped"
+    description: "Tenancy model: org-scoped | user-scoped | hybrid | single-tenant"
+  tenancy_column:
+    default: "organizationId"
+    description: "Tenant key column (organizationId for org-scoped, ownerId/userId for user-scoped)"
+
 provides:
   templates:
     - type: "template"

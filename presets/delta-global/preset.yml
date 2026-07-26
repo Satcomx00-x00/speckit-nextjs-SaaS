@@ -1,0 +1,124 @@
+schema_version: "1.0"
+
+preset:
+  id: "delta-global"
+  name: "Delta-Global SaaS Stack"
+  version: "1.0.0"
+  description: "Example company preset: fully specialized commands for a concrete SaaS stack (Bun + Turborepo, Hono + tRPC v11, Next.js 15, Drizzle + Postgres, BetterAuth, ioredis, BullMQ/Temporal, ClickHouse, ArgoCD, Infisical). Use it as-is for that stack, or copy it as the starting point for your own company preset. For a stack-neutral Next.js experience install the 'nextjs' preset instead."
+  author: "satcom"
+  repository: "https://github.com/Satcomx00-x00/speckit-nextjs-SaaS"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.6.0"
+
+# Resolved at install time into the installed copy. Override per project in
+# .specify/preset-variables.yml (scoped under this preset's id or flat).
+variables:
+  package_scope:
+    default: "@delta-global"
+    description: "Workspace package scope used in imports (e.g. @acme)"
+  tenancy_column:
+    default: "organizationId"
+    description: "Tenant key column on every tenant-scoped table (e.g. organizationId, ownerId)"
+  tenancy_column_snake:
+    default: "organization_id"
+    description: "Snake-case DB column name backing the tenant key"
+  tenant_table:
+    default: "organizations"
+    description: "Table the tenant key references (e.g. organizations, users)"
+  retry_label:
+    default: "Réessayer"
+    description: "User-facing retry button label in generated error boundaries"
+
+provides:
+  templates:
+    - type: "template"
+      name: "plan-template"
+      file: "templates/plan-template.md"
+      description: "Delta-Global plan template — 17 sections with the concrete stack reference table and monorepo file map"
+      replaces: "plan-template"
+
+    - type: "template"
+      name: "tasks-template"
+      file: "templates/tasks-template.md"
+      description: "Delta-Global tasks template — fixed 18-task skeleton with monorepo path conventions and phase gates"
+      replaces: "tasks-template"
+
+    - type: "command"
+      name: "speckit.plan"
+      file: "commands/speckit.plan.md"
+      description: "Delta-Global planning — Drizzle schema, Zod contracts, tRPC procedures, DAL, services, feature flag, cache strategy, background jobs, RBAC matrix, observability, marginal cost estimate."
+      replaces: "speckit.plan"
+
+    - type: "command"
+      name: "speckit.tasks"
+      file: "commands/speckit.tasks.md"
+      description: "Delta-Global task generation — 17 dependency-ordered tasks from feature flag to quality gates, including the @critical tenant-isolation E2E."
+      replaces: "speckit.tasks"
+
+    - type: "command"
+      name: "speckit.feature"
+      file: "commands/speckit.feature.md"
+      description: "End-to-end vertical-slice scaffold: Zod contracts → Drizzle table → DAL → services → tRPC → RSC read path → client write path → side effects → observability → tests → ship checklist."
+      replaces: "speckit.feature"
+
+    - type: "command"
+      name: "speckit.analyze"
+      file: "commands/speckit.analyze.md"
+      description: "Cross-artifact drift detector — table↔DAL/procedure coverage, Zod↔procedure coverage, cache-tag invalidation, RBAC enforcement, hard-constraint violations, RFC completeness, Drizzle↔Zod consistency."
+      replaces: "speckit.analyze"
+
+    - type: "command"
+      name: "speckit.checklist"
+      file: "commands/speckit.checklist.md"
+      description: "Gate runner with built-in presets (scope, rfc, pre-merge, security, observability) evaluating checklist items to PASS/FAIL/WARN with a gate verdict."
+      replaces: "speckit.checklist"
+
+    - type: "command"
+      name: "speckit.audit"
+      file: "commands/speckit.audit.md"
+      description: "Run the regex audit rule engine over the codebase and summarize findings by section and severity."
+
+    - type: "command"
+      name: "speckit.audit.deep"
+      file: "commands/speckit.audit.deep.md"
+      description: "Five-layer audit: regex rules, tsc --noEmit, eslint/Biome, dependency scan, LLM confirmation and cross-file pattern analysis."
+
+    - type: "command"
+      name: "speckit.constitution.scan"
+      file: "commands/speckit.constitution.scan.md"
+      description: "Scan the repo and export a constitution at .specify/memory/constitution.md with a Sync Impact Report."
+
+    - type: "command"
+      name: "speckit.docs.sync"
+      file: "commands/speckit.docs.sync.md"
+      description: "Sync AGENTS.md / CLAUDE.md / .github/copilot-instructions.md / GEMINI.md from the installed agent-context template."
+
+    - type: "command"
+      name: "speckit.scaffold.route"
+      file: "commands/speckit.scaffold.route.md"
+      description: "Scaffold an App Router route segment (page, layout, loading, error, not-found) wired to the feature flag and error tracker."
+
+    - type: "command"
+      name: "speckit.scaffold.dal"
+      file: "commands/speckit.scaffold.dal.md"
+      description: "Scaffold a DAL module with server-only import, session check, tenant scoping, Result envelope, and cache wiring."
+
+    - type: "command"
+      name: "speckit.scaffold.trpc"
+      file: "commands/speckit.scaffold.trpc.md"
+      description: "Scaffold a standalone tRPC router plus integration tests and appRouter wiring; aborts on hard-constraint violations."
+
+    - type: "command"
+      name: "speckit.scaffold.temporal"
+      file: "commands/speckit.scaffold.temporal.md"
+      description: "Scaffold a deterministic Temporal workflow, activities, and TestWorkflowEnvironment tests with time skipping."
+
+tags:
+  - "saas"
+  - "nextjs"
+  - "trpc"
+  - "drizzle"
+  - "temporal"
+  - "example-company-preset"

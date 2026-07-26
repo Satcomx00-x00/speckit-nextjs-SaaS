@@ -109,7 +109,101 @@ Given that feature description, do this:
 
 4. Load `templates/spec-template.md` to understand required sections.
 
-5. Follow this execution flow:
+5. **Intake interview** — before writing anything, interview the user so the
+   spec is built on confirmed decisions instead of guesses.
+
+   **When to skip**: skip the entire interview (and document every default
+   taken in the Assumptions section) when any of these hold:
+   - The user wrote "quick", "just generate", "no questions", or `--no-interview`
+     in the feature description
+   - The session is non-interactive (workflow/CI run with no user available) —
+     never stall a pipeline waiting for interview answers
+   - The feature description already answers a question — never re-ask what
+     the user has already said
+
+   **Format rules** (professional, low-friction):
+   - At most **2 rounds**, at most **4 questions per round**, presented as one
+     block per round — never one message per question
+   - Every question offers lettered options with exactly one marked
+     **(default)**; the user may reply per question (`Q1: B, Q2: default`),
+     or `defaults` to accept every remaining default
+   - Options must be real alternatives with different implications — no
+     filler options
+   - After each round, echo a one-line summary of what was decided before
+     continuing
+
+   **Round 1 — Product framing** (always, minus already-answered):
+
+   ```markdown
+   ## Intake — Round 1 of 2: Product framing
+
+   **Q1 — Who is this for?**
+   | Option | Answer | Implications |
+   |--------|--------|--------------|
+   | A | [role(s) inferred from description] (default) | [scope implication] |
+   | B | [plausible alternative audience] | [implication] |
+   | C | All authenticated users | [implication] |
+
+   **Q2 — What single outcome makes this feature a success?**
+   | A | [inferred metric, e.g. "X% of active tenants use it in 30 days"] (default) | measured via analytics |
+   | B | [task-completion / latency alternative] | [implication] |
+
+   **Q3 — What is explicitly OUT of scope for v1?**
+   | A | [inferred non-goals] (default) | keeps v1 small |
+   | B | Nothing — full scope in one release | larger spec, longer delivery |
+
+   **Q4 — Which slice must ship first (P1)?**
+   | A | [inferred primary story] (default) | thinnest end-to-end slice |
+   | B | [alternative slice] | [implication] |
+
+   Reply per question (`Q1: A, Q2: B, ...`) or `defaults`.
+   ```
+
+   **Round 2 — Behavior & operations** (ask only the rows that apply to this
+   feature; drop rows that don't):
+
+   ```markdown
+   ## Intake — Round 2 of 2: Behavior & operations
+
+   **Q5 — Failure behavior**: when [the main mutation] fails, what should the
+   user experience be?
+   | A | Inline error, data preserved, retry available (default) | standard |
+   | B | [feature-specific alternative, e.g. queued + notified] | [implication] |
+
+   **Q6 — Data & privacy**: does this feature store personal or sensitive data?
+   | A | [inference from description] (default) | drives GDPR table + retention |
+   | B | Yes — [fields] with [retention] | deletion/export path required |
+   | C | No personal data | GDPR section minimal |
+
+   **Q7 — Rollout**: how should this reach users?
+   | A | Flag ON progressively: internal → beta → all (default) | safest |
+   | B | Internal/staff only for now | validation before exposure |
+   | C | Everyone at release | only for low-risk changes |
+
+   **Q8 — Access & limits**: which plans/roles get it, and any quota?
+   | A | All paid plans, all roles per RBAC table (default) | [implication] |
+   | B | Specific tier(s): [inferred] | entitlement check required |
+   | C | Per-tenant quota: [suggested number] | quota + upgrade path in spec |
+
+   Reply per question or `defaults`.
+   ```
+
+   **Recording answers** — every answer lands in the spec, not in a side note:
+   - Q1 → User Stories roles + RBAC Roles Affected
+   - Q2 → Success Metrics
+   - Q3 → Non-Goals
+   - Q4 → Story priorities (P1/P2)
+   - Q5 → an `IF/THEN` EARS acceptance criterion + Edge Cases
+   - Q6 → GDPR / Privacy Classification
+   - Q7 → the spec header flag strategy + Rollback Thresholds context
+   - Q8 → Assumptions + a quota Edge Case (and an entitlement FR if gated)
+
+   Defaults that were accepted without an explicit answer are recorded in
+   Assumptions as "(default — confirm before implementation)"; answers the
+   user gave explicitly are recorded as decisions and are NOT re-asked by
+   `__SPECKIT_COMMAND_CLARIFY__` later.
+
+6. Follow this execution flow:
     1. Parse user description from arguments
        If empty: ERROR "No feature description provided"
     2. Extract key concepts from description
@@ -124,8 +218,18 @@ Given that feature description, do this:
        - Prioritize clarifications by impact: scope > security/privacy > user experience > technical details
     4. Fill User Scenarios & Testing section
        If no clear user flow: ERROR "Cannot determine user scenarios"
+       Write every acceptance criterion in EARS syntax:
+         - Event-driven:  WHEN <trigger>, THE SYSTEM SHALL <response>
+         - State-driven:  WHILE <state>, THE SYSTEM SHALL <response>
+         - Unwanted:      IF <failure/abuse case>, THEN THE SYSTEM SHALL <response>
+         - Optional:      WHERE <feature/flag is present>, THE SYSTEM SHALL <response>
+         - Ubiquitous:    THE SYSTEM SHALL <response>
+       Every criterion names an observable system response. A criterion that
+       fits no EARS pattern is not yet testable — rewrite it or move it to
+       Open Questions. Always include at least one Unwanted (IF/THEN)
+       criterion per story — failure behavior is part of the story.
     5. Generate Functional Requirements
-       Each requirement must be testable
+       Each requirement must be testable — use the same EARS patterns
        Use reasonable defaults for unspecified details (document assumptions in Assumptions section)
     6. Define Success Criteria
        Create measurable, technology-agnostic outcomes
@@ -134,9 +238,9 @@ Given that feature description, do this:
     7. Identify Key Entities (if data involved)
     8. Return: SUCCESS (spec ready for planning)
 
-6. Write the specification to SPEC_FILE using the template structure, replacing placeholders with concrete details derived from the feature description (arguments) while preserving section order and headings.
+7. Write the specification to SPEC_FILE using the template structure, replacing placeholders with concrete details derived from the feature description (arguments) **and the intake interview answers** while preserving section order and headings.
 
-7. **Specification Quality Validation**: After writing the initial spec, validate it against quality criteria:
+8. **Specification Quality Validation**: After writing the initial spec, validate it against quality criteria:
 
    a. **Create Spec Quality Checklist**: Generate a checklist file at `SPECIFY_FEATURE_DIRECTORY/checklists/requirements.md` using the checklist template structure with these validation items:
 
@@ -158,6 +262,8 @@ Given that feature description, do this:
       
       - [ ] No [NEEDS CLARIFICATION] markers remain
       - [ ] Requirements are testable and unambiguous
+      - [ ] Acceptance criteria use EARS syntax (WHEN/WHILE/IF-THEN/WHERE/SHALL)
+      - [ ] Every user story has at least one failure-case (IF/THEN) criterion
       - [ ] Success criteria are measurable
       - [ ] Success criteria are technology-agnostic (no implementation details)
       - [ ] All acceptance scenarios are defined
@@ -183,7 +289,7 @@ Given that feature description, do this:
 
    c. **Handle Validation Results**:
 
-      - **If all items pass**: Mark checklist complete and proceed to step 8
+      - **If all items pass**: Mark checklist complete and proceed to step 9
 
       - **If items fail (excluding [NEEDS CLARIFICATION])**:
         1. List the failing items and specific issues
@@ -228,13 +334,15 @@ Given that feature description, do this:
 
    d. **Update Checklist**: After each validation iteration, update the checklist file with current pass/fail status
 
-8. **Report completion** to the user with:
+9. **Report completion** to the user with:
    - `SPECIFY_FEATURE_DIRECTORY` — the feature directory path
    - `SPEC_FILE` — the spec file path
+   - A one-paragraph intake summary: which decisions the user made, which
+     defaults were taken (so reviewers see them at a glance)
    - Checklist results summary
    - Readiness for the next phase (`__SPECKIT_COMMAND_CLARIFY__` or `__SPECKIT_COMMAND_PLAN__`)
 
-9. **Check for extension hooks**: After reporting completion, check if `.specify/extensions.yml` exists in the project root.
+10. **Check for extension hooks**: After reporting completion, check if `.specify/extensions.yml` exists in the project root.
    - If it exists, read it and look for entries under the `hooks.after_specify` key
    - If the YAML cannot be parsed or is invalid, skip hook checking silently and continue normally
    - Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
@@ -282,15 +390,16 @@ Given that feature description, do this:
 
 When creating this spec from a user prompt:
 
-1. **Make informed guesses**: Use context, industry standards, and common patterns to fill gaps
-2. **Document assumptions**: Record reasonable defaults in the Assumptions section
-3. **Limit clarifications**: Maximum 3 [NEEDS CLARIFICATION] markers - use only for critical decisions that:
+1. **Interview first, guess second**: The intake interview (step 5) is where scope, audience, rollout, and privacy get decided — a question answered there is a decision, not an assumption
+2. **Make informed guesses** for everything below interview level: use context, industry standards, and common patterns to fill gaps
+3. **Document assumptions**: Record reasonable defaults in the Assumptions section, marking untouched interview defaults "(default — confirm before implementation)"
+4. **Limit clarifications**: Maximum 3 [NEEDS CLARIFICATION] markers - use only for critical decisions that:
    - Significantly impact feature scope or user experience
    - Have multiple reasonable interpretations with different implications
    - Lack any reasonable default
-4. **Prioritize clarifications**: scope > security/privacy > user experience > technical details
-5. **Think like a tester**: Every vague requirement should fail the "testable and unambiguous" checklist item
-6. **Common areas needing clarification** (only if no reasonable default exists):
+5. **Prioritize clarifications**: scope > security/privacy > user experience > technical details
+6. **Think like a tester**: Every vague requirement should fail the "testable and unambiguous" checklist item
+7. **Common areas needing clarification** (only if no reasonable default exists):
    - Feature scope and boundaries (include/exclude specific use cases)
    - User types and permissions (if multiple conflicting interpretations possible)
    - Security/compliance requirements (when legally/financially significant)
