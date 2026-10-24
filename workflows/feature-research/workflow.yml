@@ -1,0 +1,119 @@
+schema_version: "1.0"
+
+workflow:
+  id: "feature-research"
+  name: "Feature Research → Spec (Delta-Global)"
+  version: "1.0.0"
+  author: "satcom"
+  description: >-
+    From a half-formed idea to a reviewed spec: /speckit.research grounds the
+    idea in what the platform already has, researches prior art, the current
+    state of the art, stack-compatible approaches, failure modes, compliance
+    and cost on the web, and writes a cited brief; a human decides go / no-go;
+    then /speckit.specify and /speckit.clarify turn the brief into a spec
+    ready for the saas-feature workflow. Requires the delta-global preset.
+
+requires:
+  speckit_version: ">=0.7.2"
+  integrations:
+    any: ["claude", "copilot", "gemini"]
+
+inputs:
+  idea:
+    type: string
+    required: true
+    prompt: "Describe the idea in your own words — what users could do, why, any product or link that inspired it"
+
+  slug:
+    type: string
+    required: true
+    prompt: "Short kebab-case slug (e.g. 'weekly-digest-email')"
+
+  depth:
+    type: string
+    default: "standard"
+    enum: ["quick", "standard", "deep"]
+    prompt: "quick (~6 sources), standard (~12–20), deep (25+, competitor teardown, spike plan)"
+
+  compare:
+    type: string
+    default: "none"
+    prompt: "Technology/vendor decision to compare, e.g. 'pgvector HNSW vs Qdrant' — or 'none'"
+
+  language:
+    type: string
+    default: "en"
+    enum: ["en", "fr"]
+    prompt: "Language of the brief"
+
+  integration:
+    type: string
+    default: "auto"
+    prompt: "AI coding integration to use (auto, claude, copilot, gemini)"
+
+steps:
+  - id: research
+    command: speckit.research
+    integration: "{{ inputs.integration }}"
+    input:
+      args: |
+        {{ inputs.idea }}
+
+        Slug: {{ inputs.slug }} · depth: --{{ inputs.depth }} · lang: --lang {{ inputs.language }}
+        Compare: {{ inputs.compare }} (ignore if 'none'; otherwise run in --compare mode)
+        Write docs/research/<today>-{{ inputs.slug }}/brief.md and sources.md.
+
+  - id: go-no-go
+    type: gate
+    message: |
+      Read docs/research/*-{{ inputs.slug }}/brief.md.
+      - go      → write the spec from the brief
+      - park    → keep the brief; add the idea to FUTURE.md with the brief link
+      - reject  → stop (record why in the brief's Verdict)
+    options: [go, park, reject]
+    on_reject: abort
+    check: "find docs/research -path '*{{ inputs.slug }}*' -name brief.md | grep -q . && find docs/research -path '*{{ inputs.slug }}*' -name sources.md | grep -q ."
+
+  - id: decide
+    type: switch
+    expression: "{{ steps.go-no-go.output.choice }}"
+    cases:
+      go:
+        - id: specify
+          command: speckit.specify
+          integration: "{{ inputs.integration }}"
+          input:
+            args: |
+              Feature: {{ inputs.slug }}
+              Research brief: docs/research/*-{{ inputs.slug }}/brief.md (use the newest).
+              Write the spec from the brief: carry its recommendation, MVP slice
+              (= Story 1, P1), seed EARS acceptance criteria, non-goals, risks
+              (as edge cases), compliance notes (GDPR table, DPIA trigger), plan
+              & entitlement impact and open questions. Link the brief in the
+              header. Run the intake interview only for what the brief left open.
+
+        - id: clarify
+          command: speckit.clarify
+          integration: "{{ inputs.integration }}"
+          input:
+            args: "Resolve the brief's open questions that change the data model, GraphQL surface, authorization, entitlements or kill-switch."
+
+        - id: review-spec
+          type: gate
+          message: |
+            Spec ready? Next: run the delivery workflow with the brief —
+              specify workflow run saas-feature --input feature_name={{ inputs.slug }} \
+                --input feature_description="…" \
+                --input research_brief=docs/research/<date>-{{ inputs.slug }}/brief.md
+            (the saas-feature specify step will refine this spec rather than start over).
+          options: [approve, reject]
+          on_reject: abort
+          check: "f=$(find specs -path '*-{{ inputs.slug }}/spec.md' | head -1); [ -n \"$f\" ] && ! grep -q 'NEEDS CLARIFICATION' \"$f\""
+
+      park:
+        - id: park-idea
+          type: prompt
+          integration: "{{ inputs.integration }}"
+          prompt: |
+            Append to FUTURE.md one line: the idea "{{ inputs.slug }}", today's
+            date, the brief's one-sentence verdict and the brief path.

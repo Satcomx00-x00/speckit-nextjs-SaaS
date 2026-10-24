@@ -1,18 +1,19 @@
 ---
-description: Delta-Global planning command. Decomposes a feature into Drizzle schema, Zod contracts, tRPC procedures (orgScopedProcedure), DAL (server-only, ioredis), pure services (Result<T,E>), RSC page (SDK createCaller), client components (@trpc/react-query), BullMQ/Temporal side effects, RBAC matrix, feature flag, cache strategy, and observability plan — all tagged with phase and criticality.
+description: Delta-Global planning. Turns spec.md into plan.md (+ research.md, data-model.md, contracts/schema.graphql, quickstart.md) for the real platform — Drizzle schema with RLS block, Zod contracts, GraphQL SDL with field-level auth directives, packages/db functions, transport-agnostic services, global DB-backed flag, owner-scoped RBAC, id-list cache, Temporal, observability as code in platform-infra, Service Interaction Map, Complexity Justification.
 handoffs:
   - label: Generate tasks
     agent: speckit.tasks
-    prompt: Generate Delta-Global implementation tasks from this plan. Sequence by dependency order.
-  - label: Scaffold the route
-    agent: speckit.scaffold.route
-    prompt: Scaffold the RSC page and route segments for the feature in this plan.
-  - label: Scaffold the DAL
-    agent: speckit.scaffold.dal
-    prompt: Scaffold the DAL module described in this plan.
+    prompt: Generate tasks.md from this plan, grouped by user story, tests first.
+    send: true
   - label: Analyze consistency
     agent: speckit.analyze
-    prompt: Cross-check this plan for RFC drift, RBAC gaps, and hard constraint violations.
+    prompt: Cross-check spec ↔ plan for coverage gaps, missing directives, tenancy predicate, flag registry and migration safety.
+  - label: RFC checklist
+    agent: speckit.checklist
+    prompt: preset:rfc
+scripts:
+  sh: scripts/bash/setup-plan.sh --json
+  ps: scripts/powershell/setup-plan.ps1 -Json
 ---
 
 ## User Input
@@ -21,328 +22,124 @@ handoffs:
 $ARGUMENTS
 ```
 
-Parse the user's description to extract:
-- Feature name / slug (kebab-case)
-- Data shape (entities, fields, relationships) — infer from context if not stated
-- Auth requirement — `none` / `required` / `required + ownership`
-- RBAC roles involved — `owner / admin / member / viewer`
-- Background work — `none` / `bullmq` / `temporal`
-- Analytics — `none` / `clickhouse`
-- Migration needed — `yes / no`
-
-If critical fields are missing and cannot be reasonably inferred, ask one clarifying question before proceeding.
-
----
+You **MUST** consider the user input before proceeding (if not empty). It
+usually carries planning guidance ("reuse the sector feed predicates", "no
+Temporal, keep it synchronous"). If it names a research brief
+(`docs/research/…/brief.md`), read it — its recommendation is the default
+approach unless the spec overrode it.
 
 ## Pre-Execution Checks
 
-Check for `.specify/extensions.yml`. If present, look for hooks under `hooks.before_plan`. Apply standard hook-processing: skip `enabled: false`, skip non-empty `condition`, surface optional, auto-execute mandatory.
+Check for `.specify/extensions.yml`. If present, look for hooks under
+`hooks.before_plan`. Apply standard hook-processing: skip `enabled: false`,
+skip non-empty `condition`, surface optional hooks, execute mandatory ones and
+wait for them.
 
----
+## Ground rules
+
+- **The rule book is the platform's**: `.specify/memory/constitution.md`, then
+  `docs/adr/` (ADR-0000 first), then `CLAUDE.md`. The preset's
+  `CONVENTIONS.md` summarises them; where they disagree the platform wins.
+- **Read the code before designing it.** Every path in the File Map is either
+  verified to exist or marked `(new)`. Every reuse claim cites `file:line`.
+  The 026 plan's best decisions (read-side predicates, "a PIN cannot be a
+  WHERE clause") came from reading the existing predicates first.
+- **Measure, don't assume.** Volumes, row counts and latencies come from the
+  latest spec measurements, `CLAUDE.md`, or a query you ran — and say which and
+  when. A number nobody measured is labelled `assumed`.
+- **No section silently skipped.** Sections 1–14 always exist; a section that
+  does not apply keeps one line saying why ("§9 None — synchronous, p95 budget
+  120 ms").
 
 ## Outline
 
-Produce a structured plan using the template below. Omit any sub-section that is not applicable; add a one-line note explaining why.
-
----
-
-```
-# Plan: <Feature Name>
-
-**Feature slug**: `<feature-name>`
-**Feature flag**: `ff-<feature-name>` (default: OFF)
-**Phase**: <P1 | P2 | P3 | P4>
-**Auth**: <none | required | required + RBAC>
-**Migration**: <yes | no>
-**Background work**: <none | bullmq | temporal>
-**Analytics**: <none | clickhouse>
-
----
-
-## 1. Drizzle Schema
-
-**Package**: `packages/db/src/schema/<feature-name>.ts`
-
-| Table | Key columns | Indexes | Relations |
-|---|---|---|---|
-| `<feature_snake>` | `id uuid pk`, `{{ var.tenancy_column }} uuid fk`, `createdAt`, `updatedAt` | `({{ var.tenancy_column }}, createdAt desc)` | `→ organizations` |
-
-**Migration notes**:
-- Forward-compatible: <yes — add-only / no — requires two-step>
-- Rollback plan: <flag OFF → behavior unchanged / describe steps>
-- `drizzle-kit generate` only — no handwritten SQL
-
----
-
-## 2. Zod Contracts
-
-**Package**: `packages/shared/src/schemas/<feature-name>.ts`
-
-| Schema name | Kind | Used by |
-|---|---|---|
-| `Create<Feature>Input` | input | `<feature>.create` procedure |
-| `Update<Feature>Input` | input | `<feature>.update` procedure |
-| `Get<Feature>Input` | input | `<feature>.get` procedure |
-| `List<Feature>Input` | input | `<feature>.list` procedure |
-| `<Feature>Dto` | output | all queries |
-| `<Feature>ListDto` | output | list query |
-| `<Feature>ErrorCode` | const literal | procedures + services |
-
-**Hard rules**: no `z.any()`, `z.unknown()`, `z.record(z.any())` — Biome fails on these.
-`{{ var.tenancy_column }}` is absent from all input schemas (extracted from BetterAuth session in procedures).
-
----
-
-## 3. tRPC Procedures
-
-**File**: `apps/api/src/routers/<feature-name>.ts`
-
-| Procedure | Type | Input schema | Output schema | Min role | Flag guard |
-|---|---|---|---|---|---|
-| `<feature>.get` | query | `Get<Feature>Input` | `<Feature>Dto` | viewer | yes |
-| `<feature>.list` | query | `List<Feature>Input` | `<Feature>ListDto` | viewer | yes |
-| `<feature>.create` | mutation | `Create<Feature>Input` | `<Feature>Dto` | member | yes |
-| `<feature>.update` | mutation | `Update<Feature>Input` | `<Feature>Dto` | member | yes |
-| `<feature>.delete` | mutation | `Get<Feature>Input` | void | admin | yes |
-
-**All procedures use `orgScopedProcedure`** — `{{ var.tenancy_column }}` extracted from BetterAuth session, NEVER from input.
-
-**Hono routes**: only for webhooks / mobile clients / streaming — not for internal tRPC calls.
-
----
-
-## 4. DAL Functions
-
-**File**: `apps/api/src/dal/<feature-name>.ts`
-
-| Function | Input | Returns | Cache |
-|---|---|---|---|
-| `get<Feature>ById` | `id, orgId` | `Result<<Feature>DTO \| null>` | `<feature>:org:{orgId}:{id}` TTL 5m |
-| `list<Feature>s` | `List<Feature>Input, orgId` | `Result<<Feature>ListDTO>` | `<feature>s:org:{orgId}` TTL 5m |
-| `create<Feature>Record` | `data, orgId` | `Result<<Feature>DTO>` | invalidates `<feature>s:org:{orgId}*` |
-| `update<Feature>Record` | `id, orgId, data` | `Result<<Feature>DTO>` | invalidates `<feature>:org:{orgId}:*` |
-| `delete<Feature>Record` | `id, orgId` | `Result<void>` | invalidates `<feature>:org:{orgId}:*` |
-
-**Hard rules**:
-- `import 'server-only'` as first line
-- `{{ var.tenancy_column }}` required parameter on every function — never optional
-- `eq(table.{{ var.tenancy_column }}, orgId)` in every `where` clause
-- Cursor-based pagination only — no `OFFSET`
-- Explicit column selection — no `SELECT *`
-- Sensitive fields excluded from returned rows
-
----
-
-## 5. Services (Pure Logic)
-
-**File**: `apps/api/src/services/<feature-name>.ts`
-
-| Function | Input | Returns | Purpose |
-|---|---|---|---|
-| `buildCreate<Feature>Payload` | `Create<Feature>Input, { now }` | `Result<DBPayload>` | validate + transform |
-| `can<Feature>` | `role, action` | `boolean` | pure RBAC lookup |
-| `validate<Feature>State` | `current, next` | `Result<void>` | state machine guard |
-
-**Hard rules**: zero imports from `db`, `auth`, `redis`, `Hono`, `tRPC`, `Next`, `headers`, `cookies`.
-`now` and `rng` injected as parameters. `Result<T,E>` returned — no `throw` on business errors.
-
----
-
-## 6. Feature Flag
-
-| Property | Value |
-|---|---|
-| Name | `ff-<feature-name>` |
-| Default | `OFF` |
-| Granularity | `org` (per-organization) |
-| Kill switch | < 5s (flag service hot-reload) |
-| Guard locations | tRPC procedures (TRPCError FORBIDDEN) + RSC page (redirect) |
-| Planned removal | <date or "after stable 100% rollout"> |
-
----
-
-## 7. Cache Strategy
-
-| Key pattern | Data | TTL | Invalidated by |
-|---|---|---|---|
-| `<feature>:org:{orgId}:{id}` | Single DTO | 5m | `update`, `delete` |
-| `<feature>s:org:{orgId}` | List (first page only) | 5m | `create`, `update`, `delete` |
-
-**React Query keys** (client-side, aligned with server cache):
-- `[['<featureCamel>', 'get'], { input: { id }, type: 'query' }]`
-- `[['<featureCamel>', 'list'], { input: { limit: 20 }, type: 'query' }]`
-
-Invalidation call: `queryClient.invalidateQueries({ queryKey: [['<featureCamel>', 'list']] })` on mutation success.
-
----
-
-## 8. Background Jobs
-
-| Side effect | Tool | Worker/Workflow ID | Trigger |
-|---|---|---|---|
-| <describe side effect> | BullMQ / Temporal | `<feature>-{id}` | `<feature>.create` mutation |
-
-**BullMQ** — fire-and-forget, at-least-once delivery.
-**Temporal** — durable, resumable, time-gated; use when failure recovery or multi-step coordination is required.
-
-Workflow IDs must be idempotent: derived from the resource ID (e.g. `<feature>-${row.id}`), not `crypto.randomUUID()`.
-
----
-
-## 9. RBAC Matrix
-
-| Action | owner | admin | member | viewer | public |
-|---|---|---|---|---|---|
-| read | ✓ | ✓ | ✓ | ✓ | — |
-| create | ✓ | ✓ | ✓ | — | — |
-| update | ✓ | ✓ | ✓ | — | — |
-| delete | ✓ | ✓ | — | — | — |
-
-Role extracted from `ctx.member.role` (BetterAuth session) — never from procedure input.
-Evaluated by the `can<Feature>` service function — not inline in the procedure.
-
----
-
-## 10. RSC / Client Boundary
-
-**Server boundary**: `apps/web/app/(app)/[workspace]/<feature-name>/page.tsx` — all RSC
-**Client islands**:
-- `Create<Feature>Form` — user interaction, form state, tRPC mutation
-- `<Feature>List` — React Query `useQuery` with `initialData` hydration
-
-**Discipline**:
-- `'use client'` only at interactive leaves — never on page or layout
-- RSC fetches via `createCaller` — not `fetch()`, not React Query
-- Client receives typed `initialData` from RSC — no re-fetch on mount
-
----
-
-## 11. UI States (Mandatory Four)
-
-| State | File | Implementation |
-|---|---|---|
-| Loading | `loading.tsx` + `<Feature>ListSkeleton` | Skeleton matching final layout, `aria-busy` |
-| Empty | `<Feature>List` empty branch | Illustration + copy + primary CTA |
-| Error | `error.tsx` | GlitchTip capture + "{{ var.retry_label }}" button |
-| Success | `<Feature>List` populated branch | Data rendered, toast on mutation |
-
----
-
-## 12. Accessibility Checkpoints
-
-- [ ] `<label>` linked to every input — no placeholder-only labels
-- [ ] `aria-invalid` + `aria-describedby` on form errors
-- [ ] `:focus-visible` preserved — no `outline: none` without replacement
-- [ ] Keyboard navigation: Enter / Escape / Tab for all interactive flows
-- [ ] AA contrast (Tailwind 4 tokens — check custom colors)
-- [ ] `aria-live` region for async state updates
-- [ ] `alt` on images; `aria-hidden` on decorative icons
-- [ ] 44×44px minimum touch targets on mobile
-
----
-
-## 13. Observability Plan
-
-| Signal | What | Where |
-|---|---|---|
-| OTel span | `org.id`, `user.id`, `procedure.name` | tRPC middleware |
-| Structured log | `{{ var.tenancy_column }}`, `userId`, `correlationId`, `durationMs` | procedure boundary |
-| Analytics event | `<feature>.created` / `<feature>.updated` etc. | ClickHouse — **not Postgres** |
-| Error capture | GlitchTip `captureException` | `error.tsx` + procedure catch |
-| Alert | error_rate > 1% / 15m, p95 > threshold / 15m | Grafana Alerting |
-
----
-
-## 14. Security Checklist
-
-- [ ] `{{ var.tenancy_column }}` extracted from BetterAuth session — never from input
-- [ ] `eq(table.{{ var.tenancy_column }}, orgId)` in every DAL query
-- [ ] Role checked via `can<Feature>(ctx.member.role, action)` in every mutation
-- [ ] ioredis rate limit: `rl:<procedure.name>:{userId}` before writes
-- [ ] No raw SQL anywhere (drizzle-kit only)
-- [ ] No `{{ var.package_scope }}/analytics-db` imports in `apps/api` or `apps/web`
-- [ ] Secrets via `env.ts` + Infisical — never `process.env` directly
-- [ ] No sensitive fields in DTO schemas or cache values
-
----
-
-## 15. Testing Plan
-
-| Test type | File | Tool | Scope |
-|---|---|---|---|
-| Unit | `apps/api/test/<feature-name>/services.test.ts` | `bun:test` | Pure service functions, 100% branch |
-| Integration (DAL) | `apps/api/test/<feature-name>/dal.test.ts` | `bun:test` + Testcontainers | Cross-org isolation, session guards |
-| Integration (procedures) | `apps/api/test/<feature-name>/procedures.test.ts` | `bun:test` + Testcontainers | RBAC, rate limit, idempotency |
-| E2E (happy path) | `apps/web/tests/e2e/<feature-name>/happy.spec.ts` | Playwright | Login → create → assert visible |
-| E2E (@critical) | `apps/web/tests/e2e/<feature-name>/isolation.spec.ts` | Playwright | 4 tenant-isolation assertions |
-
----
-
-## 16. Open Questions
-
-List any decisions to make before implementation starts:
-
-1. <Question — e.g. soft-delete vs hard-delete?>
-2. <Question — e.g. quota limit per org?>
-3. *(Delete this section if there are none.)*
-
----
-
-## 17. Marginal Cost Estimate
-
-| Resource | Per operation | At 10k ops/day |
-|---|---|---|
-| Postgres rows | +1 per create | ~10k rows/day |
-| Redis keys | +2 per create (one + list) | negligible |
-| BullMQ jobs | +1 per create | ~10k jobs/day |
-| ClickHouse events | +1 per action | ~30–50k events/day |
-
-Rollback threshold: revert flag if error rate > <N>% over 15m OR p95 > <Nms>.
-
-## 18. Service Interaction Map
-
-> Mandatory sweep — one row per platform service with an explicit verdict.
-> "Not touched" requires a one-line reason; no blank rows.
-
-| Service | Touched? | Interaction | Changes needed | If down/slow |
-|---|---|---|---|---|
-| Web (Next.js) | yes/no | <render/mutate> | <routes, components> | <degraded UX> |
-| API (Hono+tRPC) | yes/no | <procedures> | <routers> | <error contract> |
-| Postgres | yes/no | <read/write/migrate> | <tables> | <failure behavior> |
-| Redis | yes/no | <cache/rate-limit> | <keys — must match §7> | <fallback? stampede?> |
-| BullMQ workers | yes/no | <enqueue/consume> | <jobs> | <retry, DLQ> |
-| Temporal | yes/no | <start/signal/schedule> | <workflows> | <backlog behavior> |
-| ClickHouse | yes/no | <emit events — must match §13> | <event names> | <never blocks> |
-| External APIs (LLM/email/payment/...) | yes/no | <call per provider> | <client, env.ts, Infisical> | **timeout/retry/fallback/cost — required** |
-| BetterAuth | yes/no | <role/org checks> | <guards> | <lockout behavior> |
-| Object storage | yes/no | <upload/serve> | <buckets> | <failure behavior> |
-
-```
-
----
-
-## Post-Plan Checks
-
-After producing the plan:
-
-1. Verify every procedure in §3 has an entry in the RBAC matrix in §9.
-2. Verify every cache key in §7 has a corresponding invalidation site listed.
-3. Verify every analytics event in §13 routes to ClickHouse — never Postgres.
-4. Verify the feature flag in §6 is listed with a kill-switch < 5s.
-5. Verify the Service Interaction Map (§18) has an explicit verdict for every service, every "yes" row is reflected in §1-§15 (including a failure-mode test in §15), and every external-API row names timeout / retry / fallback / cost. A blank row blocks the plan.
-6. If any hard constraint is violated (raw SQL, analytics-db import, orgId from input), flag it as CRITICAL before outputting the plan.
-
-After completing these checks, offer:
-
-```
-## Next Steps
-
-Run `/speckit.tasks <feature-name>` to generate ordered implementation tasks, or
-run `/speckit.scaffold.route <feature-name>` to scaffold the route structure now.
-```
-
----
+1. **Setup**: Run `{SCRIPT}` from repo root and parse FEATURE_SPEC, IMPL_PLAN,
+   SPECS_DIR, BRANCH. IMPL_PLAN already contains the plan template.
+
+2. **Load context**: FEATURE_SPEC; constitution (note its version); the ADR
+   index; CLAUDE.md *Forbidden Patterns*, *Approved External Services* and the
+   `SPECKIT START/END` block; any research brief; related shipped specs
+   (grep the slug and key nouns across `specs/*/plan.md`). Abort with guidance
+   if the spec still has `[NEEDS CLARIFICATION]` markers on anything that
+   changes the data model, the API surface or authorization — run
+   `/speckit.clarify` first.
+
+3. **Phase 0 — research.md**: one numbered entry `R1…Rn` per unknown, decision
+   or reuse question, in the format *Question → Finding (with file:line or
+   measurement) → Decision → Alternatives rejected*. Include at least:
+   - **Tenancy model** — owner-scoped (default: `{{ var.tenancy_model }}`, column
+     `{{ var.tenancy_column_snake }}`) or org-scoped, and why (Constitution IV).
+   - **Existing code to reuse or extend** — services, DB functions, SDL modules,
+     web seams, components.
+   - **ADR trigger check** — pinned version/convention change, new API
+     surface, new external service, new data store → ADR required; otherwise
+     record "no ADR: <reason>" (research.md is then the design record).
+   - **Egress** — every outbound host and whether it is already approved.
+   - **Library docs** — for any library API you are not certain of in its
+     installed version, read the docs (e.g. context7) and cite them.
+
+4. **Phase 1 — design artifacts**:
+   - `data-model.md` — entities, columns, constraints, indexes, onDelete,
+     state transitions, scope key, RLS block.
+   - `contracts/schema.graphql` — the exact SDL to add, with directives.
+   - `quickstart.md` — how to run and see the feature locally (flag ON via
+     seed or `setFeatureFlag`, `bun dev`, which URL, which account), plus the
+     integration-test setup (`INTEGRATION_DB_URL`, port-forward to
+     `platform-pg-test`).
+   - `plan.md` — fill every section of the template:
+     - **Service Interaction Map** first: an explicit yes/no for every
+       service, reasons on every "no", timeout/retry/fallback/cost on every
+       external call. Every "yes" must reappear in §1–§13.
+     - **§1 Drizzle** — then simulate `check:migration-expand-contract`: list
+       every statement it would flag and the recipe used (CONVENTIONS §6).
+       New table ⇒ `--custom` RLS block, listed in §14.
+     - **§3 GraphQL** — directive on every field; `@audited` + top-level
+       `reason` on admin mutations; `@cost` on list/expensive fields; typed
+       error codes.
+     - **§4 DAL / §5 Services** — scope predicate on every query; projection;
+       `id` tiebreak; services receive `db`/`redis` as parameters.
+     - **§6 Flag** — key without prefix, global, OFF-behaviour argument.
+     - **§7 RBAC** — real roles only (no `viewer`).
+     - **§8 Cache** — ordered id arrays; blast radius of each write; Redis-down
+       behaviour.
+     - **§9 Temporal** — or "None" with the synchronous latency budget.
+     - **§10 Observability** — bounded labels; alert per rollback threshold
+       in `platform-infra/charts/grafana/alerting/<NNN>-<slug>.json`;
+       dashboard; runbook path.
+     - **§11 Testing** — a row per AC group, a `@critical` authz/isolation
+       row per mutation, a flag-OFF row, a failure-mode row per touched
+       service.
+     - **§14 Complexity Justification** — every deviation from a MUST, or
+       "None".
+
+5. **Constitution check (inline, not a separate gate section)**: walk
+   principles I–VI against the design and cite, next to each design block, the
+   principle it satisfies. Any MUST violated without a §14 row is an
+   **ERROR** — fix the design or justify it; do not output a plan that
+   silently violates the constitution.
+
+6. **Post-plan checks** (fix before reporting):
+   1. Every FR in the spec maps to a plan section; every AC maps to a §11 row.
+   2. Every SDL field in §3 has a directive and an RBAC row in §7.
+   3. Every cache key in §8 has an invalidation site.
+   4. Every rollback threshold in the spec has an alert row in §10.
+   5. Every "yes" in the Service Interaction Map appears in §1–§13 and §11.
+   6. No forbidden pattern from CLAUDE.md appears anywhere (tRPC, Server
+      Actions, a ClickHouse client in api/web, a flag gating the graph,
+      `ff-` prefixed keys, `viewer` role, a queue library, polling loops,
+      payload-cached lists, unbounded metric labels, hand-written SQL outside
+      a justified `--custom` block).
+
+7. **Agent context**: update the plan reference between `<!-- SPECKIT START -->`
+   and `<!-- SPECKIT END -->` in `CLAUDE.md` to point to this plan and its
+   artifacts. Keep what is already there about other features unless it is
+   now false; never remove the turborepo managed block.
+
+8. **Report**: branch, plan path, artifacts written, the ADRs required (or
+   none), the §14 deviations, and the riskiest part of the design in one
+   sentence.
 
 ## Post-Execution Hooks
 
-Check `.specify/extensions.yml` for `hooks.after_plan` entries and apply standard hook-processing.
+Check `.specify/extensions.yml` for `hooks.after_plan` entries and apply
+standard hook-processing.

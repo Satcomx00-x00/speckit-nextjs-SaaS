@@ -8,11 +8,14 @@ from typing import Any
 from specify_cli.workflows.base import StepBase, StepContext, StepResult, StepStatus
 from specify_cli.workflows.expressions import evaluate_expression
 
+DEFAULT_TIMEOUT_SECONDS = 300
+
 
 class ShellStep(StepBase):
     """Run a local shell command (non-agent).
 
-    Captures exit code and stdout/stderr.
+    Captures exit code and stdout/stderr.  ``timeout`` (seconds, default
+    300) bounds the command — full test suites and builds need more.
     """
 
     type_key = "shell"
@@ -24,6 +27,7 @@ class ShellStep(StepBase):
         run_cmd = str(run_cmd)
 
         cwd = context.project_root or "."
+        timeout = config.get("timeout", DEFAULT_TIMEOUT_SECONDS)
 
         # NOTE: shell=True is required to support pipes, redirects, and
         # multi-command expressions in workflow YAML.  Workflow authors
@@ -36,7 +40,7 @@ class ShellStep(StepBase):
                 capture_output=True,
                 text=True,
                 cwd=cwd,
-                timeout=300,
+                timeout=timeout,
             )
             output = {
                 "exit_code": proc.returncode,
@@ -56,7 +60,7 @@ class ShellStep(StepBase):
         except subprocess.TimeoutExpired:
             return StepResult(
                 status=StepStatus.FAILED,
-                error="Shell command timed out after 300 seconds.",
+                error=f"Shell command timed out after {timeout} seconds.",
                 output={"exit_code": -1, "stdout": "", "stderr": "timeout"},
             )
         except OSError as exc:
@@ -71,5 +75,13 @@ class ShellStep(StepBase):
         if "run" not in config:
             errors.append(
                 f"Shell step {config.get('id', '?')!r} is missing 'run' field."
+            )
+        timeout = config.get("timeout")
+        if timeout is not None and (
+            isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1
+        ):
+            errors.append(
+                f"Shell step {config.get('id', '?')!r}: 'timeout' must be an "
+                f"integer number of seconds >= 1."
             )
         return errors
