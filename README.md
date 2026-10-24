@@ -62,7 +62,7 @@ forms) — testable by construction, and exactly what `verify` probes.
 | Preset | Purpose |
 |---|---|
 | `nextjs` | Stack-neutral Next.js directives: constitution + agent context, audits (`speckit.audit`, `speckit.audit.deep`), constitution scanner, ADR commands (`adr.new` / `adr.supersede` / `adr.audit`), session memory (`context.refresh`, `session.close`, `handoff`), scaffolds, `speckit.help` |
-| `delta-global` | Example **company preset**: the same commands fully specialized for one concrete stack (Bun, Hono+tRPC v11, Drizzle, BetterAuth, ioredis, BullMQ/Temporal, ClickHouse, ArgoCD, Infisical). Copy it as the starting point for your own |
+| `delta-global` | **The Delta-Global platform preset** — every command specialised for the platform as it is (Bun/Turborepo, Next.js 16 + next-intl, Hono + Apollo GraphQL with field-level auth directives, Drizzle expand-only migrations, Temporal + Python workers, Stripe, DB-backed global flags, OTel → ClickHouse → Grafana, ArgoCD pins in platform-infra), plus `/speckit.research` and `speckit.scaffold.graphql`. Every rule it encodes is in [`presets/delta-global/CONVENTIONS.md`](presets/delta-global/CONVENTIONS.md) |
 
 ### Preset variables
 
@@ -90,6 +90,21 @@ uv tool install specify-cli --from git+https://github.com/Satcomx00-x00/speckit-
 specify init my-saas
 specify preset add nextjs
 specify workflow run saas-feature
+```
+
+### On the Delta-Global platform
+
+```bash
+cd platform
+specify preset add delta-global           # spec/plan/tasks templates + 14 commands
+for w in saas-feature hotfix migration-only feature-research; do specify workflow add "$w"; done
+
+# an idea, not a feature yet: research it first (web + grounded in the repo)
+/speckit.research "weekly digest email of what moved in my sectors"
+specify workflow run feature-research --input idea="…" --input slug=weekly-digest
+
+# full delivery
+specify workflow run saas-feature --input feature_name=weekly-digest   --input feature_description="…"   --input research_brief=docs/research/2026-10-24-weekly-digest/brief.md
 ```
 
 ---

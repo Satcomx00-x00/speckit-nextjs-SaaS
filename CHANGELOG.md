@@ -6,6 +6,63 @@
 
 ### Added
 
+- `/speckit.research` (delta-global): pre-spec research for a feature idea —
+  grounds it in the platform first (constitution, CLAUDE.md, ADRs, PRODUCT.md,
+  shipped specs, code), then researches prior art, the current state of the
+  art, stack-compatible approaches, failure modes, compliance and cost with
+  cited, dated sources; writes `docs/research/<date>-<slug>/brief.md` +
+  `sources.md`; `--quick` / `--deep` / `--compare A vs B` / `--lang fr`
+- `feature-research` workflow: research → go / park / reject gate → spec +
+  clarify, ready for `saas-feature`
+- `presets/delta-global/CONVENTIONS.md`: the platform facts every
+  delta-global command and workflow is written against
+- `speckit.scaffold.graphql` (SDL with `@public`/`@auth`/`@selfOnly`/
+  `@audited`/`@cost`, thin resolver, web operations + codegen, authz tests)
+- delta-global `spec-template` (Status/Verified header, global AC-### ids,
+  kill-switch strategy, manual verification, performance budget, plan &
+  entitlement impact)
+- Shell steps accept `timeout:` (seconds, default 300) — full test suites and
+  builds exceed five minutes
+
+### Changed
+
+- **delta-global 2.0.0** re-aligned with the platform as it really is:
+  GraphQL (Apollo) replaces tRPC everywhere; DB functions in `packages/db`,
+  transport-agnostic services; owner-scoped tenancy by default; real roles
+  (no `viewer`); DB-backed **global** flags with plain kebab keys (no `ff-`);
+  Temporal only; `@critical` = api integration tests; E2E nightly `@smoke`;
+  tests-first, tasks grouped by user story (`T###`), one commit per phase;
+  the real CI gate battery (`biome ci`, depcruise, `check:*`, codegen/py-model
+  drift, i18n parity/scan, `check:integration-skip`, bundle budget, ruff/ty);
+  constitution scan amends with a verified Sync Impact Report instead of
+  overwriting
+- `saas-feature` 2.0.0: optional research phase, clarify, STRIDE pass for
+  auth/billing/admin/PII, ADR gate, checkpointed implementation (foundation →
+  MVP → rest), alerts/dashboards/runbook as code in `platform-infra`,
+  `release(<app>)` → staging pin → flag ON on staging → production pin +
+  manual ArgoCD sync → flag ON in production; rollout by tenant percentage
+  removed (flags are global)
+- `hotfix` 2.0.0: mitigate first (flag OFF / pin back), red-then-green
+  regression test, rollback = pin, postmortem with owned actions
+- `migration-only` 2.0.0: shaped by the db-migrate init container (one
+  transaction while the previous release serves) and the absence of backups —
+  expand / contract / backfill / index / constraint, `check:migration-*`,
+  `Allow-Contract-Migration` trailer with evidence, `pg_dumpall` snapshots,
+  api-first release
+
+### Removed
+
+- `speckit.scaffold.trpc` (tRPC is gone from the platform)
+
+### Fixed
+
+- `migration-only` built its branch name with an unsupported `replace`
+  filter (left the raw table list in the git command); now uses a slug input
+
+## [Unreleased — wave 0/1]
+
+### Added
+
 - `/speckit.verify` core command: evidence-based post-implementation
   verification (EARS criteria probed, flag registered, migrations applied,
   observability actually emitted, claimed CI gates present in CI config);
