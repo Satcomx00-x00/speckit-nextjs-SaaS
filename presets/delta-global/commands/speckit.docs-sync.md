@@ -2,7 +2,7 @@
 description: Delta-Global agent-context sync. Brings CLAUDE.md (primary) and AGENTS.md in line with the current constitution, ADRs and repository reality — section by section, with a reviewed diff — while preserving the <!-- SPECKIT START/END --> feature block and the turborepo-managed block untouched.
 handoffs:
   - label: Scan the constitution
-    agent: speckit.constitution.scan
+    agent: speckit.constitution-scan
     prompt: Check whether the constitution itself has drifted from the repository before syncing docs from it.
 ---
 

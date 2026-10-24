@@ -61,8 +61,8 @@ forms) — testable by construction, and exactly what `verify` probes.
 
 | Preset | Purpose |
 |---|---|
-| `nextjs` | Stack-neutral Next.js directives: constitution + agent context, audits (`speckit.audit`, `speckit.audit.deep`), constitution scanner, ADR commands (`adr.new` / `adr.supersede` / `adr.audit`), session memory (`context.refresh`, `session.close`, `handoff`), scaffolds, `speckit.help` |
-| `delta-global` | **The Delta-Global platform preset** — every command specialised for the platform as it is (Bun/Turborepo, Next.js 16 + next-intl, Hono + Apollo GraphQL with field-level auth directives, Drizzle expand-only migrations, Temporal + Python workers, Stripe, DB-backed global flags, OTel → ClickHouse → Grafana, ArgoCD pins in platform-infra), plus `/speckit.research` and `speckit.scaffold.graphql`. Every rule it encodes is in [`presets/delta-global/CONVENTIONS.md`](presets/delta-global/CONVENTIONS.md) |
+| `nextjs` | Stack-neutral Next.js directives: constitution + agent context, audits (`speckit.audit`, `speckit.audit-deep`), constitution scanner, ADR commands (`adr.new` / `adr.supersede` / `adr.audit`), session memory (`context.refresh`, `session.close`, `handoff`), scaffolds, `speckit.help` |
+| `delta-global` | **The Delta-Global platform preset** — every command specialised for the platform as it is (Bun/Turborepo, Next.js 16 + next-intl, Hono + Apollo GraphQL with field-level auth directives, Drizzle expand-only migrations, Temporal + Python workers, Stripe, DB-backed global flags, OTel → ClickHouse → Grafana, ArgoCD pins in platform-infra), plus `/speckit.research` and `speckit.scaffold-graphql`. Every rule it encodes is in [`presets/delta-global/CONVENTIONS.md`](presets/delta-global/CONVENTIONS.md) |
 
 ### Preset variables
 

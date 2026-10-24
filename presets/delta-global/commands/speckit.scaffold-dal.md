@@ -2,7 +2,7 @@
 description: Scaffold the data-access slice of a Delta-Global feature — DB functions in packages/db/src/<slug>-dal.ts (scope predicate from session claims, projected columns, cursor + id tiebreak), the transport-agnostic service in apps/api/src/services/<slug>.ts that receives db/redis as parameters, cache-tag invalidation, and the integration tests (describeIntegration, @critical isolation) written first.
 handoffs:
   - label: Scaffold the GraphQL slice
-    agent: speckit.scaffold.graphql
+    agent: speckit.scaffold-graphql
     prompt: Scaffold the SDL, resolver and web operations that call this service.
   - label: Generate feature tasks
     agent: speckit.tasks

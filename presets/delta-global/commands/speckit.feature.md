@@ -5,16 +5,16 @@ handoffs:
     agent: speckit.plan
     prompt: Generate the full feature plan (14 sections + Service Interaction Map) for the feature described in $ARGUMENTS.
   - label: Scaffold the GraphQL slice
-    agent: speckit.scaffold.graphql
+    agent: speckit.scaffold-graphql
     prompt: Scaffold the SDL, resolvers and web operations for this feature.
   - label: Scaffold the route
-    agent: speckit.scaffold.route
+    agent: speckit.scaffold-route
     prompt: Scaffold the App Router route segment for this feature.
   - label: Scaffold the DAL
-    agent: speckit.scaffold.dal
+    agent: speckit.scaffold-dal
     prompt: Scaffold the packages/db DAL functions and the service for this feature.
   - label: Scaffold Temporal workflow
-    agent: speckit.scaffold.temporal
+    agent: speckit.scaffold-temporal
     prompt: Scaffold the Temporal workflow and activities for this feature's async side effects.
   - label: Analyze consistency
     agent: speckit.analyze
@@ -102,7 +102,7 @@ Tests: `packages/shared/src/schemas/<slug>.test.ts` — accepts valid, rejects e
 
 ### Phase 2 — DB functions & service (`packages/db`, `apps/api/src/services`)
 
-Follow `/speckit.scaffold.dal`. In short:
+Follow `/speckit.scaffold-dal`. In short:
 
 - `packages/db/src/<slug>-dal.ts`: one function per use case, `db: DbExecutor` first, scope predicate from the caller's viewer id on every scoped query, projected columns, cursor + `id` tiebreak, no N+1. Export from `packages/db/src/index.ts`.
 - `apps/api/src/services/<slug>.ts`: receives `db` / `redis` / Temporal client **as parameters** (`check:composition-root`), owns authorization (`can<Feature>(role, action)` or an ownership gate), the flag check, rate limits on writes, cache-tag invalidation (`cache-tags.ts` + `invalidateTags()`), and typed errors (`class <Feature>Error extends Error { code }`). Lists cache ordered id arrays; a Redis failure falls back to the DB.
@@ -111,7 +111,7 @@ Tests (`apps/api/test/<slug>/`): `dal.test.ts` and `authz.test.ts` under `descri
 
 ### Phase 3 — GraphQL surface (`packages/graphql`, `apps/api/src/graphql`)
 
-Follow `/speckit.scaffold.graphql`. In short:
+Follow `/speckit.scaffold-graphql`. In short:
 
 - SDL in `packages/graphql/schema/NN-<area>.graphql`: every field `@public` | `@auth(role: …)` | `@selfOnly`; admin mutations `@audited(action: "<area>.<verb>")` with `reason: String!` as a top-level argument; `@cost` on list fields; SCREAMING enums returned by NAME.
 - Resolver `apps/api/src/graphql/resolvers/<slug>.ts`: parse with the Zod schema, `requireViewer(ctx)` / `viewerIsAdmin(ctx)`, one service call, typed `GraphQLError` codes — never raw DB text. Register in `resolvers/index.ts`.
@@ -121,11 +121,11 @@ Tests: `resolvers.test.ts`, `audit.test.ts` for admin mutations (row written wit
 
 ### Phase 4 — Background work (only if the plan has it)
 
-Follow `/speckit.scaffold.temporal`: deterministic workflow in `packages/temporal-workflows/src/workflows/<area>.ts`, activities in `apps/workers` (Pydantic-validated) or `apps/crawler`, idempotent workflow id from the business key, bounded retries and timeouts, BENIGN for expected failures, start/complete/fail events, a recorded replay history. The API service starts it; the workflow never reads the flag.
+Follow `/speckit.scaffold-temporal`: deterministic workflow in `packages/temporal-workflows/src/workflows/<area>.ts`, activities in `apps/workers` (Pydantic-validated) or `apps/crawler`, idempotent workflow id from the business key, bounded retries and timeouts, BENIGN for expected failures, start/complete/fail events, a recorded replay history. The API service starts it; the workflow never reads the flag.
 
 ### Phase 5 — Web (`apps/web`)
 
-Follow `/speckit.scaffold.route`. In short:
+Follow `/speckit.scaffold-route`. In short:
 
 - Read path: async RSC `page.tsx` under `src/app/[locale]/(dashboard)/<slug>/` (or `(admin)/admin/<slug>/`), localized `generateMetadata` title, `Suspense` around the data, reads through `src/lib/server/<slug>.ts` returning `Result` — a failed read degrades, never throws across the RSC wire.
 - Write path: `'use client'` leaf components using `useMutation` (inside `(dashboard)`/`(admin)`) or the seam `src/lib/<slug>-api.ts`; the form schema is the shared Zod schema; server error codes map to fields; submit disabled while pending; cache updated through Apollo (`keyFields` on singletons, `refetchQueries` or cache `modify` on lists) — no second client, no `fetch('/graphql')`.

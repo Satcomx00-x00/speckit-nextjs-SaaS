@@ -2,10 +2,10 @@
 description: Scaffold a GraphQL slice for the Delta-Global API — SDL in packages/graphql/schema with field-level auth directives (@public/@auth/@selfOnly, @audited on admin mutations, @cost on expensive fields), a thin resolver over apps/api/src/services, the web operation document, codegen, and the resolver/authz tests with @critical naming. Replaces the removed tRPC scaffold.
 handoffs:
   - label: Scaffold the DB functions
-    agent: speckit.scaffold.dal
+    agent: speckit.scaffold-dal
     prompt: Scaffold the packages/db DAL functions and the service this resolver calls.
   - label: Scaffold the route
-    agent: speckit.scaffold.route
+    agent: speckit.scaffold-route
     prompt: Scaffold the RSC page and client seam that consume these operations.
   - label: Analyze consistency
     agent: speckit.analyze

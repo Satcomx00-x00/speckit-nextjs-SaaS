@@ -98,38 +98,38 @@ provides:
       description: "Run the regex audit rule engine over the codebase and summarize findings by section and severity, mapped to the platform's own check:* gates."
 
     - type: "command"
-      name: "speckit.audit.deep"
-      file: "commands/speckit.audit.deep.md"
+      name: "speckit.audit-deep"
+      file: "commands/speckit.audit-deep.md"
       description: "Layered audit: regex rules, Biome, tsc, depcruise, the check:* scripts, gitleaks, bun audit, ruff/ty, then LLM confirmation and cross-file pattern analysis."
 
     - type: "command"
-      name: "speckit.constitution.scan"
-      file: "commands/speckit.constitution.scan.md"
+      name: "speckit.constitution-scan"
+      file: "commands/speckit.constitution-scan.md"
       description: "Scan the repo and amend .specify/memory/constitution.md (semver bump + verified Sync Impact Report) instead of overwriting it."
 
     - type: "command"
-      name: "speckit.docs.sync"
-      file: "commands/speckit.docs.sync.md"
+      name: "speckit.docs-sync"
+      file: "commands/speckit.docs-sync.md"
       description: "Sync CLAUDE.md / AGENTS.md from verified repo facts, preserving the SPECKIT and turborepo managed blocks."
 
     - type: "command"
-      name: "speckit.scaffold.route"
-      file: "commands/speckit.scaffold.route.md"
+      name: "speckit.scaffold-route"
+      file: "commands/speckit.scaffold-route.md"
       description: "Scaffold an App Router segment under [locale]/(dashboard) — page, loading, error (retry()), title, next-intl keys, server flag guard."
 
     - type: "command"
-      name: "speckit.scaffold.dal"
-      file: "commands/speckit.scaffold.dal.md"
+      name: "speckit.scaffold-dal"
+      file: "commands/speckit.scaffold-dal.md"
       description: "Scaffold DB functions in packages/db with the scope predicate, column projection, id-tiebreak pagination, and @critical integration tests."
 
     - type: "command"
-      name: "speckit.scaffold.graphql"
-      file: "commands/speckit.scaffold.graphql.md"
+      name: "speckit.scaffold-graphql"
+      file: "commands/speckit.scaffold-graphql.md"
       description: "Scaffold an SDL module with auth/audit/cost directives, a thin resolver over a service, web operations + codegen, and resolver/authz tests."
 
     - type: "command"
-      name: "speckit.scaffold.temporal"
-      file: "commands/speckit.scaffold.temporal.md"
+      name: "speckit.scaffold-temporal"
+      file: "commands/speckit.scaffold-temporal.md"
       description: "Scaffold a deterministic Temporal workflow with activities in apps/workers (Python) or apps/crawler (TS), idempotent IDs, and a replay history."
 
 tags:

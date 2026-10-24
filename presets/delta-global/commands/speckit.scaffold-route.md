@@ -2,13 +2,13 @@
 description: Scaffold a Delta-Global App Router route segment under apps/web/src/app/[locale]/ — an async RSC page that reads through lib/server (Result envelope, never a throw across the RSC wire), a localized title, Suspense + skeleton, the shared RouteError boundary (retry(), not reset()), the serverFeatureFlag/flagAllows gate, next-intl keys in every locale, and the DOM/route-convention tests.
 handoffs:
   - label: Scaffold the GraphQL slice
-    agent: speckit.scaffold.graphql
+    agent: speckit.scaffold-graphql
     prompt: Scaffold the SDL, resolver and web operations this route reads and mutates.
   - label: Generate feature tasks
     agent: speckit.tasks
     prompt: Generate implementation tasks for the feature at this route.
   - label: Scaffold Temporal workflow
-    agent: speckit.scaffold.temporal
+    agent: speckit.scaffold-temporal
     prompt: Scaffold the Temporal workflow for any async side effects started from this route.
 ---
 

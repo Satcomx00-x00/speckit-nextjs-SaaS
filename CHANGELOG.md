@@ -16,7 +16,7 @@
   clarify, ready for `saas-feature`
 - `presets/delta-global/CONVENTIONS.md`: the platform facts every
   delta-global command and workflow is written against
-- `speckit.scaffold.graphql` (SDL with `@public`/`@auth`/`@selfOnly`/
+- `speckit.scaffold-graphql` (SDL with `@public`/`@auth`/`@selfOnly`/
   `@audited`/`@cost`, thin resolver, web operations + codegen, authz tests)
 - delta-global `spec-template` (Status/Verified header, global AC-### ids,
   kill-switch strategy, manual verification, performance budget, plan &
@@ -56,6 +56,10 @@
 
 ### Fixed
 
+- delta-global commands with three-segment names (`speckit.scaffold.dal`,
+  `speckit.audit.deep`, …) were treated as extension overrides and never
+  installed; renamed to two segments (`speckit.scaffold-dal`, …) — the
+  Claude skill names (`speckit-scaffold-dal`) are unchanged
 - `migration-only` built its branch name with an unsupported `replace`
   filter (left the raw table list in the git command); now uses a slug input
 

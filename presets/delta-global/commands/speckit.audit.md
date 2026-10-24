@@ -1,11 +1,11 @@
 ---
-description: Delta-Global codebase audit. Runs the platform's own machine gates (Biome, typecheck with the check:* scripts, depcruise, composition-root, migration, i18n, integration-skip) plus the kit's regex audit script, maps every finding to the constitution, and proposes prioritized fixes. Fast; use /speckit.audit.deep for confirmation and cross-file analysis.
+description: Delta-Global codebase audit. Runs the platform's own machine gates (Biome, typecheck with the check:* scripts, depcruise, composition-root, migration, i18n, integration-skip) plus the kit's regex audit script, maps every finding to the constitution, and proposes prioritized fixes. Fast; use /speckit.audit-deep for confirmation and cross-file analysis.
 handoffs:
   - label: Deep audit
-    agent: speckit.audit.deep
+    agent: speckit.audit-deep
     prompt: Run the deep audit on the same scope — add tests, dependency and Python layers plus cross-file confirmation.
   - label: Amend the constitution from findings
-    agent: speckit.constitution.scan
+    agent: speckit.constitution-scan
     prompt: Re-scan the repo and propose a constitution amendment for the gaps this audit found.
 ---
 
@@ -141,7 +141,7 @@ Omit empty severities. Never list a finding the tools did not return.
 
 ### 5. Recommendations
 
-- Any Critical → run `/speckit.audit.deep` before the next release.
+- Any Critical → run `/speckit.audit-deep` before the next release.
 - A failing `GATE.*` on `main` → fix before any feature work: it means CI was red or not looked at (GitHub Free has no required checks).
 - `GATE_NOT_WIRED` → propose the `ci.yml` step.
 - Recurring classes (same rule in ≥ 3 modules) → propose a new `scripts/check-*.ts` gate rather than manual fixes.

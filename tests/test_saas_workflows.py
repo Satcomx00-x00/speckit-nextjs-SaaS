@@ -232,4 +232,18 @@ class TestDeltaGlobalMatchesThePlatform:
 
         data = yaml.safe_load((REPO_ROOT / "presets" / "delta-global" / "preset.yml").read_text())
         names = {t["name"] for t in data["provides"]["templates"]}
-        assert {"speckit.research", "speckit.scaffold.graphql", "spec-template"} <= names
+        assert {"speckit.research", "speckit.scaffold-graphql", "spec-template"} <= names
+
+    def test_preset_commands_are_not_mistaken_for_extension_overrides(self):
+        """A `speckit.<x>.<y>` name is treated as an override of extension <x>
+        and silently skipped when that extension is absent — delta-global's
+        own commands must use two segments or they never install."""
+        import yaml
+
+        data = yaml.safe_load((REPO_ROOT / "presets" / "delta-global" / "preset.yml").read_text())
+        three_part = [
+            t["name"]
+            for t in data["provides"]["templates"]
+            if t.get("type") == "command" and len(t["name"].split(".")) >= 3
+        ]
+        assert three_part == []

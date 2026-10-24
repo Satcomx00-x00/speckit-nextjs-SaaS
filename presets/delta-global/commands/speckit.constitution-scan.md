@@ -5,7 +5,7 @@ handoffs:
     agent: speckit.constitution
     prompt: Refine the proposed amendment. Adjust wording, scope or version bump based on…
   - label: Sync agent context files
-    agent: speckit.docs.sync
+    agent: speckit.docs-sync
     prompt: Propagate the amended constitution to CLAUDE.md and AGENTS.md.
 ---
 
@@ -166,7 +166,7 @@ amendment is accepted). Then print:
 
 ### Next
 - Open a PR titled `docs(config): constitution v<new> — <summary>`
-- Run `/speckit.docs.sync` after it merges
+- Run `/speckit.docs-sync` after it merges
 ```
 
 ## Post-Execution Hooks
