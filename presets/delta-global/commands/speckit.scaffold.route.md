@@ -1,15 +1,15 @@
 ---
-description: Scaffold a Delta-Global App Router route segment. Generates page.tsx (RSC, SDK createCaller, feature-flag guard), layout.tsx, loading.tsx, error.tsx (GlitchTip capture, {{ var.retry_label }} button), and not-found.tsx — wired to BetterAuth, the flag service, and {{ var.package_scope }}/ui conventions.
+description: Scaffold a Delta-Global App Router route segment under apps/web/src/app/[locale]/ — an async RSC page that reads through lib/server (Result envelope, never a throw across the RSC wire), a localized title, Suspense + skeleton, the shared RouteError boundary (retry(), not reset()), the serverFeatureFlag/flagAllows gate, next-intl keys in every locale, and the DOM/route-convention tests.
 handoffs:
-  - label: Scaffold the DAL
-    agent: speckit.scaffold.dal
-    prompt: Scaffold the DAL module this route depends on.
+  - label: Scaffold the GraphQL slice
+    agent: speckit.scaffold.graphql
+    prompt: Scaffold the SDL, resolver and web operations this route reads and mutates.
   - label: Generate feature tasks
     agent: speckit.tasks
     prompt: Generate implementation tasks for the feature at this route.
   - label: Scaffold Temporal workflow
     agent: speckit.scaffold.temporal
-    prompt: Scaffold the Temporal workflow for any async side effects on this route.
+    prompt: Scaffold the Temporal workflow for any async side effects started from this route.
 ---
 
 ## User Input
@@ -18,284 +18,113 @@ handoffs:
 $ARGUMENTS
 ```
 
-Parse the route path and feature name from `$ARGUMENTS`. Examples:
+Parse from `$ARGUMENTS` (ask once if missing):
 
-| Input | Route prefix | Feature slug |
+| Token | Meaning | Default |
 |---|---|---|
-| `post-publishing` | `app/(app)/[workspace]/post-publishing` | `post-publishing` |
-| `app/(app)/[workspace]/invoices` | `app/(app)/[workspace]/invoices` | `invoices` |
-| `invoices --no-layout` | `app/(app)/[workspace]/invoices` | `invoices` |
-
-Flags (all optional):
-
-| Flag | Meaning | Default |
-|---|---|---|
-| `--no-layout` | Skip `layout.tsx` | generate layout |
-| `--loading=false` | Skip `loading.tsx` | generate loading |
-| `--not-found=false` | Skip `not-found.tsx` | generate not-found |
-| `--public` | No auth or flag guard | authenticated + flag guarded |
-| `--no-flag` | No feature-flag guard | generate flag guard |
-| `--title <string>` | Page title for `generateMetadata` | `<FeatureName>s` |
-| `--description <string>` | Meta description | placeholder |
-
-If the route path is missing or ambiguous, ask one clarifying question.
-
----
+| slug | kebab-case segment name | required |
+| group | `(dashboard)` (signed-in reader) · `(admin)/admin` (admin console) · `(legal)` · `share` (public) | `(dashboard)` |
+| params | dynamic segments, e.g. `[id]` | none |
+| flag | flag key, plain kebab-case, no `ff-` prefix | the slug, or none |
+| interactive | client islands needed (forms, mutations) | inferred |
 
 ## Pre-Execution Checks
 
-Check for `.specify/extensions.yml`. If present, look for hooks under `hooks.before_scaffold`. Apply standard hook-processing.
+Check for `.specify/extensions.yml`. If present, look for hooks under `hooks.before_scaffold`. Apply standard hook-processing: skip `enabled: false`, skip non-empty `condition`, surface optional hooks, execute mandatory hooks and wait for them.
 
-Compute `ROUTE_ROOT`:
-- Base: `apps/web/app/(app)/[workspace]/`
-- Append the feature slug. Example: `post-publishing` → `apps/web/app/(app)/[workspace]/post-publishing/`
+Read before writing: `apps/web/src/app/[locale]/(dashboard)/sources/submissions/page.tsx` (flag-gated page), `apps/web/src/app/[locale]/(dashboard)/for-you/page.tsx` (title + streaming), `apps/web/src/components/route-error.tsx`, `apps/web/src/app/route-conventions.test.ts`, and `apps/web/docs/adr/0002-graphql-presentation-tier-one-apollo-client.md`.
 
-If `src/app/` exists instead, use that as the base.
+## Rules this scaffold enforces
 
----
+- **Server Components by default.** `'use client'` only on interactive leaves; Server Components are passed as `children` into client ones.
+- `params` / `searchParams` are Promises — always `await` them; validate any `searchParams` with Zod.
+- Initial data is read on the server through `apps/web/src/lib/server/<slug>.ts` (`import "server-only"`, `query()` from `lib/apollo/rsc.ts`), which returns the `Result` envelope from `lib/result.ts`. A failed read **degrades** (the client view fetches itself) — it never throws across the RSC wire.
+- One Apollo client per browser session: hooks only inside `(dashboard)` and `(admin)/admin`; imperative calls through the seam `apps/web/src/lib/<slug>-api.ts` (`getBrowserClient()`). Never `new ApolloClient(`, never `fetch('/graphql')` by hand, never a Server Action.
+- Every non-admin page has a localized `generateMetadata` title (`getTranslations`), the brand comes from the `[locale]` layout template.
+- Every page sits under an `error.tsx` (the route-group one is enough — `(dashboard)/error.tsx` already renders `<RouteError>`). A segment-specific boundary also delegates to `RouteError`, which uses `retry()` (re-fetches) not `reset()` and reports through `reportClientError`.
+- `next/image` with remote URLs passed through `httpsImageUrl()` (`src/lib/image-guard.ts`); `preload`, not the deprecated `priority`. `next/font`. No raw `<img>`.
+- Every user-facing string is a `next-intl` key present in **{{ var.locales }}** (`apps/web/messages/<locale>.json`, `{{ var.default_locale }}` is the source). No literals in JSX or in `aria-label` / `placeholder` / `title`.
+- Flag gate: `const flag = await serverFeatureFlag("<key>")` then branch on `flag === false` only — `null` (unreadable) is treated as allowed via `flagAllows()`, because the server re-checks every gated mutation. An admin route adds no flag check of its own for access: `(admin)` already re-checks `role === "admin"` server-side.
+- Four UI states, each designed: loading (skeleton matching the final layout, `aria-busy`), empty (copy + primary action), error (`RouteError`), success. Touch targets ≥ 44×44 px; keyboard complete; WCAG 2.2 AA (`bun run check:contrast` guards tokens).
+- Post-auth redirects go through `safeInternalPath()` (`src/lib/safe-redirect.ts`).
 
-## Scaffold Steps
+## Outline
 
-### 1. Check for collisions
+### 1. Tests first
 
-If any of the target files already exist, print a warning per file and ask whether to overwrite, skip, or abort before writing anything.
+- Extend nothing in `route-conventions.test.ts` unless the segment needs an exemption (and then keep "the exemption list honest").
+- `apps/web/src/components/<slug>/<slug>-view.test.tsx` — DOM test: `installDom()` from `apps/web/test/dom.ts`, Testing Library; cover the four states and the flag-OFF render. Run with `bun test --parallel`.
+- Pure helpers (`lib/server/<slug>.ts` mapping) get a `.test.ts` next to them.
 
-### 2. Write the files
+### 2. Files
 
-#### `page.tsx`
+```
+apps/web/src/app/[locale]/(dashboard)/<slug>/
+├── page.tsx                      # async RSC, generateMetadata, Suspense around the data
+└── loading.tsx                   # only if the segment needs its own skeleton beyond the group's
+apps/web/src/components/<slug>/
+├── <slug>-view.tsx               # 'use client' leaf: renders initial data, fetches itself when absent
+├── <slug>-skeleton.tsx
+└── <slug>-view.test.tsx
+apps/web/src/lib/server/<slug>.ts # server-only reads → Result
+apps/web/src/lib/<slug>-api.ts    # imperative client calls (only if needed)
+apps/web/messages/<locale>.json   # new namespace "<slug>" in each of {{ var.locales }}
+```
+
+`page.tsx`:
 
 ```tsx
-// <ROUTE_ROOT>/page.tsx
-import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
-import type { Metadata } from 'next'
-import { getSession } from '@/lib/auth'
-import { flagService } from '@/lib/flags'
-import { createCaller } from '{{ var.package_scope }}/sdk'
-import { <Feature>ListSkeleton } from '@/components/features/<feature-name>/<Feature>ListSkeleton'
-// import { <Feature>List } from '@/components/features/<feature-name>/<Feature>List'
+import type { Metadata } from "next";
+import { hasLocale } from "next-intl";
+import { getTranslations } from "next-intl/server";
+import { Suspense } from "react";
+import { ReadingListsSkeleton } from "@/components/reading-lists/reading-lists-skeleton";
+import { ReadingListsView } from "@/components/reading-lists/reading-lists-view";
+import { routing } from "@/i18n/routing";
+import { serverFeatureFlag } from "@/lib/server/feature-flag";
+import { getReadingLists } from "@/lib/server/reading-lists";
 
-interface Props {
-  params: Promise<{ workspace: string }>
-  searchParams?: Promise<Record<string, string | string[] | undefined>>
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  if (!hasLocale(routing.locales, locale)) return {};
+  const t = await getTranslations({ locale, namespace: "readingLists" });
+  return { title: t("title") };
 }
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { workspace } = await params
-  return {
-    title: '<title placeholder>',
-    description: '<description placeholder>',
-  }
+async function ReadingListsData() {
+  const enabled = await serverFeatureFlag("reading-lists");
+  if (enabled === false) return <ReadingListsView initialEnabled={false} />;
+  const result = await getReadingLists();
+  return result.ok ? <ReadingListsView initialItems={result.data} initialEnabled /> : <ReadingListsView />;
 }
 
-export default async function <FeatureName>sPage({ params }: Props) {
-  // Next.js 15: always await params and searchParams
-  const { workspace } = await params
-
-  // ── Auth guard ──────────────────────────────────────────────────────────────
-  // Remove this block if --public flag is set.
-  const session = await getSession()
-  if (!session) redirect('/login')
-
-  // ── Feature flag guard ──────────────────────────────────────────────────────
-  // Remove this block if --no-flag flag is set.
-  const flagOn = await flagService.isEnabled('ff-<feature-name>', workspace)
-  if (!flagOn) redirect(`/${workspace}`)
-
+export default function ReadingListsPage(): React.JSX.Element {
   return (
-    <main>
-      <Suspense fallback={<<Feature>ListSkeleton />}>
-        <<Feature>DataLayer workspaceId={workspace} />
-      </Suspense>
-    </main>
-  )
-}
-
-// ── Async RSC data layer ────────────────────────────────────────────────────────
-// Keep inside Suspense boundary so the page shell renders immediately.
-// Fetch via SDK server caller — NOT fetch('/api/...'), NOT React Query in RSC.
-
-async function <Feature>DataLayer({ workspaceId }: { workspaceId: string }) {
-  const caller = createCaller({ {{ var.tenancy_column }}: workspaceId })
-  const data = await caller.<featureCamel>.list({ limit: 20 })
-  // TODO: pass data as initialData prop to the client list component
-  // return <<Feature>List initialData={data} workspaceId={workspaceId} />
-  return null // remove once the component exists
+    <Suspense fallback={<ReadingListsSkeleton />}>
+      <ReadingListsData />
+    </Suspense>
+  );
 }
 ```
 
-Rules:
-- No `'use client'` — this is a Server Component.
-- `await params` and `await searchParams` — required in Next.js 15.
-- Data fetched via `createCaller` from `{{ var.package_scope }}/sdk` — never `fetch('/api/...')`.
-- Feature flag guard redirects before any data fetch.
-- `generateMetadata` always present.
-- `<Suspense>` wraps the async data layer.
+Messages (`en.json`, then the same keys in every other locale — drafts allowed via `bun run scripts/i18n-translate.ts`, human review required):
 
----
-
-#### `layout.tsx` (unless `--no-layout`)
-
-```tsx
-// <ROUTE_ROOT>/layout.tsx
-import type { ReactNode } from 'react'
-
-interface Props {
-  children: ReactNode
-  params: Promise<{ workspace: string }>
-}
-
-export default async function <FeatureName>Layout({ children, params }: Props) {
-  // Add shared data fetching here only if ALL children need it (e.g. nav context).
-  // Otherwise leave empty — don't pull data that only page.tsx needs.
-  return <>{children}</>
-}
+```json
+{ "readingLists": { "title": "Reading lists", "empty": { "title": "No reading lists yet", "cta": "Create a list" } } }
 ```
 
-Rules:
-- No `'use client'`.
-- Children typed as `ReactNode` — not `React.ReactNode`.
-- `async` only if layout fetches shared data; omit `async` if it just wraps children.
+If the segment is newly migrated to i18n, add it to `MIGRATED_DIRS` in `scripts/i18n-scan.ts` so the scan covers it.
 
----
+### 3. Verify
 
-#### `loading.tsx` (unless `--loading=false`)
-
-```tsx
-// <ROUTE_ROOT>/loading.tsx
-import { <Feature>ListSkeleton } from '@/components/features/<feature-name>/<Feature>ListSkeleton'
-
-export default function <FeatureName>Loading() {
-  return <<Feature>ListSkeleton />
-}
+```bash
+bun --filter='@delta-global/web' test        # includes route-conventions.test.ts and the DOM tests
+bun run scripts/i18n-parity.ts && bun run scripts/i18n-scan.ts
+bun run typecheck
+bun run turbo run build --filter=@delta-global/web && bun --filter=@delta-global/web perf:budget
 ```
 
-Rules:
-- No `'use client'`.
-- Uses the same skeleton component as the `<Suspense>` fallback — not a bare `<div>`.
-- `aria-busy="true"` and `aria-label` live inside the skeleton component.
-
----
-
-#### `error.tsx`
-
-```tsx
-// <ROUTE_ROOT>/error.tsx
-'use client'
-
-import { useEffect } from 'react'
-import { Button } from '{{ var.package_scope }}/ui'
-// import { captureException } from '@/lib/glitchtip' // ← replace with GlitchTip SDK
-
-interface Props {
-  error: Error & { digest?: string }
-  reset: () => void
-}
-
-export default function <FeatureName>Error({ error, reset }: Props) {
-  useEffect(() => {
-    // captureException(error)
-    console.error(error) // ← replace with GlitchTip capture before shipping
-  }, [error])
-
-  return (
-    <div role="alert" className="flex flex-col items-center gap-4 py-12 text-center">
-      <h2 className="text-lg font-semibold">Something went wrong</h2>
-      <p className="text-sm text-muted-foreground">
-        {error.digest ? `Error ID: ${error.digest}` : 'An unexpected error occurred.'}
-      </p>
-      <Button type="button" variant="outline" onClick={reset}>
-        {{ var.retry_label }}
-      </Button>
-    </div>
-  )
-}
-```
-
-Rules:
-- `'use client'` required — React error boundary.
-- `role="alert"` on the wrapper for screen-reader announcement.
-- GlitchTip capture in `useEffect` — replace `console.error` before shipping.
-- Button label is "{{ var.retry_label }}" — use `next-intl` translation key in production.
-- `{{ var.package_scope }}/ui` `Button` component, not a raw `<button>`.
-
----
-
-#### `not-found.tsx` (unless `--not-found=false`)
-
-```tsx
-// <ROUTE_ROOT>/not-found.tsx
-import Link from 'next/link'
-import { Button } from '{{ var.package_scope }}/ui'
-
-export default function <FeatureName>NotFound() {
-  return (
-    <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <h2 className="text-lg font-semibold">Not Found</h2>
-      <p className="text-sm text-muted-foreground">
-        This resource does not exist or you do not have access to it.
-      </p>
-      <Button asChild variant="outline">
-        <Link href="/">Return Home</Link>
-      </Button>
-    </div>
-  )
-}
-```
-
-Rules:
-- No `'use client'`.
-- Use `next/link` via `Button asChild` — not a raw `<a>`.
-- Message does not distinguish "not found" from "forbidden" — avoids information leakage.
-
----
-
-### 3. Print the scaffold summary
-
-```
-## Scaffold complete
-
-**Route**: `<ROUTE_ROOT>/`
-**Feature flag**: `ff-<feature-name>` (guard in page.tsx)
-**Auth**: BetterAuth session check (getSession) in page.tsx
-
-**Files created**:
-- `<ROUTE_ROOT>/page.tsx`       ← RSC, generateMetadata, flag guard, SDK caller
-- `<ROUTE_ROOT>/layout.tsx`     ← RSC wrapper  (if not skipped)
-- `<ROUTE_ROOT>/loading.tsx`    ← Suspense skeleton (if not skipped)
-- `<ROUTE_ROOT>/error.tsx`      ← Client error boundary, GlitchTip capture
-- `<ROUTE_ROOT>/not-found.tsx`  ← 404/403 handler (if not skipped)
-
-**TODOs** (search `// TODO` in generated files):
-- [ ] Implement <Feature>DataLayer — un-comment the SDK caller + component render
-- [ ] Create `<Feature>ListSkeleton` component at `components/features/<feature-name>/`
-- [ ] Replace `console.error` in error.tsx with GlitchTip `captureException`
-- [ ] Replace `generateMetadata` placeholders with real title/description
-- [ ] Wire `next-intl` translation keys for all user-visible strings
-
-**Verify**:
-- [ ] `bun run typecheck` — new files must compile cleanly
-- [ ] `ff-<feature-name>` flag declared in the flag service (OFF by default)
-- [ ] No `'use client'` in page.tsx, layout.tsx, loading.tsx, not-found.tsx
-
-**Next steps**:
-- Run `/speckit.scaffold.dal <feature-name>` for the DAL this page depends on
-- Run `/speckit.tasks <feature-name>` to generate the full implementation task list
-```
-
-### 4. Compliance check
-
-After generating all files, verify:
-
-1. `page.tsx` does **not** contain `'use client'`.
-2. `error.tsx` **does** contain `'use client'` — required by Next.js for error boundaries.
-3. `loading.tsx` and `not-found.tsx` do **not** contain `'use client'`.
-4. `page.tsx` does **not** contain `fetch('/api/...')` — only `createCaller`.
-5. `page.tsx` contains `await params` before any use of `params` — Next.js 15 requirement.
-6. `error.tsx` contains `role="alert"` on the wrapper element.
-7. Feature flag guard is present in `page.tsx` (unless `--public` or `--no-flag`).
-
----
+Report the files created, the flag behaviour (ON / OFF / unreadable), the new message keys, and the command results. If the bundle budget moved, say by how much.
 
 ## Post-Execution Hooks
 

@@ -1,12 +1,12 @@
 ---
-description: Audit the codebase against the TypeScript and Next.js behavioral directives in the constitution. Runs the audit script, summarizes findings by section and severity, and proposes prioritized fixes.
+description: Delta-Global codebase audit. Runs the platform's own machine gates (Biome, typecheck with the check:* scripts, depcruise, composition-root, migration, i18n, integration-skip) plus the kit's regex audit script, maps every finding to the constitution, and proposes prioritized fixes. Fast; use /speckit.audit.deep for confirmation and cross-file analysis.
 handoffs:
-  - label: Deep Audit
+  - label: Deep audit
     agent: speckit.audit.deep
-    prompt: Run the deep audit on the same scope. Add tsc, eslint, npm audit, and cross-file analysis.
-  - label: Rebuild Constitution from Findings
+    prompt: Run the deep audit on the same scope — add tests, dependency and Python layers plus cross-file confirmation.
+  - label: Amend the constitution from findings
     agent: speckit.constitution.scan
-    prompt: Re-scan the repo and refresh the constitution Sync Impact Report against the latest audit findings.
+    prompt: Re-scan the repo and propose a constitution amendment for the gaps this audit found.
 ---
 
 ## User Input
@@ -15,204 +15,138 @@ handoffs:
 $ARGUMENTS
 ```
 
-You **MAY** consider the user input as scope hints (e.g. "audit only `src/app` and `src/lib`", "ignore PERF rules for now", "treat Highs as Critical", "exclude tests"). If empty, audit the whole repository with default settings.
+Optional scope hints: paths (`apps/api apps/web`), a severity floor
+("criticals only"), sections ("only security"), rule IDs, a cap per rule.
+Empty = whole repository, floor `low`, 50 findings per rule.
 
 ## Pre-Execution Checks
 
-**Check for extension hooks (before audit)**:
-
-- Check if `.specify/extensions.yml` exists in the project root.
-- If it exists, read it and look for entries under the `hooks.before_audit` key.
-- If the YAML cannot be parsed or is invalid, skip hook checking silently and continue normally.
-- Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
-- For each remaining hook, do **not** attempt to interpret or evaluate hook `condition` expressions:
-  - If the hook has no `condition` field, or it is null/empty, treat the hook as executable.
-  - If the hook defines a non-empty `condition`, skip the hook and leave condition evaluation to the HookExecutor implementation.
-- For each executable hook, output the following based on its `optional` flag:
-  - **Optional hook** (`optional: true`):
-    ```
-    ## Extension Hooks
-
-    **Optional Pre-Hook**: {extension}
-    Command: `/{command}`
-    Description: {description}
-
-    Prompt: {prompt}
-    To execute: `/{command}`
-    ```
-  - **Mandatory hook** (`optional: false`):
-    ```
-    ## Extension Hooks
-
-    **Automatic Pre-Hook**: {extension}
-    Executing: `/{command}`
-    EXECUTE_COMMAND: {command}
-
-    Wait for the result of the hook command before proceeding to the Outline.
-    ```
-- If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently.
+Check for `.specify/extensions.yml`. If present, look for hooks under
+`hooks.before_audit` and apply standard hook-processing (skip
+`enabled: false`, skip non-empty `condition`, surface optional hooks, execute
+mandatory ones and wait).
 
 ## Outline
 
-You are running a **codebase quality audit** against the behavioral directives in the project constitution (`.specify/memory/constitution.md`). Output goes to the user as a structured report; nothing is written to disk except the audit JSON, which is left under `.specify/audits/`.
+Run from the platform repo root. The constitution
+(`.specify/memory/constitution.md`) is the yardstick; `CLAUDE.md` *Forbidden
+Patterns* and `.specify/presets/delta-global/CONVENTIONS.md` give the
+concrete rules. Nothing is edited; the JSON reports go to `.specify/audits/`.
 
-Follow this flow:
+### 1. Layer A — platform gates (authoritative)
 
-### 1. Parse user input for scope hints
+These are the repo's own checks; their verdict beats any regex. Run each,
+record exit code and the first failing lines. Respect path scope where the
+tool allows it.
 
-Look for:
+| ID | Command | Constitution |
+|---|---|---|
+| `GATE.LINT` | `bunx biome ci .` | I |
+| `GATE.TYPECHECK` | `bun run typecheck` (runs `check:field-auth`, `check:field-audit`, `check:log-hygiene`, `check:contrast` as turbo deps) | I, IV, V |
+| `GATE.DEPCRUISE` | `bun run depcruise` | II |
+| `GATE.COMPOSITION` | `bun run check:composition-root` | II |
+| `GATE.TRPC` | `bun run check:trpc-removal` | I |
+| `GATE.CODEGEN` | `bun --filter='@delta-global/web' codegen:check` | I |
+| `GATE.PYMODELS` | `bun run check:py-models` | I |
+| `GATE.MIGRATIONS` | `bun run check:migration-immutability origin/main && bun run check:migration-expand-contract origin/main` | IV |
+| `GATE.I18N` | `bun run scripts/i18n-parity.ts && bun run scripts/i18n-scan.ts` | — |
+| `GATE.SVG` | `bun run check:svg-assets` | — |
+| `GATE.ADMIN_DAL` | `bash scripts/guard-admin-dal-isolation.sh` | IV |
+| `GATE.SECRETS` | `gitleaks detect --source . --redact --no-banner` | IV |
 
-- **Paths** — narrow the audit to a subset (e.g. "only `src/app`, `src/lib`"). Translate into `--paths app,src` for the script.
-- **Severity floor** — phrases like "ignore mediums", "criticals only" map to `--severity critical` (or `high`).
-- **Section filters** — phrases like "skip PERF" or "only security" map to `--sections SEC` (positive) or to a follow-up filter on findings (negative).
-- **Rule filters** — explicit rule IDs (e.g. `TS.TYPE.any-usage`) map to `--rules <ids>`.
-- **Max findings per rule** — "cap at 20 per rule" → `--max-findings-per-rule 20`.
+A failing gate is a **Critical** finding (it would fail CI or a hook).
+Also check that each gate is actually wired: find it in
+`.github/workflows/ci.yml` or `.pre-commit-config.yaml`. A gate that exists
+as a script but runs nowhere is a **High** `GATE_NOT_WIRED` finding (known
+case: `guard-admin-dal-isolation.sh` claims CI but only runs in pre-commit).
 
-Default values when nothing is specified: scan the whole repo, severity floor `low`, max 50 per rule.
+### 2. Layer B — regex audit script
 
-### 2. Run the audit script
-
-Invoke it in JSON mode. The script lives in the installed preset; both shell variants exist.
-
-- **POSIX**:
-  ```bash
-  bash .specify/presets/nextjs/scripts/bash/audit-codebase.sh --json \
-      [--paths ...] [--rules ...] [--sections ...] \
-      [--severity critical|high|medium|low] [--max-findings-per-rule N]
-  ```
-- **PowerShell**:
-  ```powershell
-  pwsh .specify/presets/nextjs/scripts/powershell/audit-codebase.ps1 -Json \
-      [-Paths ...] [-Rules ...] [-Sections ...] \
-      [-Severity ...] [-MaxFindingsPerRule N]
-  ```
-
-Capture stdout into a variable; this is the **audit report**.
-
-If the script is unavailable, **stop and tell the user** — do not improvise an audit by reading files directly. The script is the source of truth.
-
-### 3. Persist the audit JSON
-
-Create `.specify/audits/` if it does not exist. Write the captured JSON to:
-
-```
-.specify/audits/audit-<ISO timestamp YYYYMMDD-HHMMSS>.json
+```bash
+bash .specify/scripts/bash/audit-codebase.sh --json [--paths ...] [--rules ...] \
+     [--sections ...] [--severity critical|high|medium|low] [--max-findings-per-rule N]
 ```
 
-Also update `.specify/audits/latest.json` (overwrite) to always point at the most recent audit. These files are read-only artifacts — never edit them by hand.
+(PowerShell: `.specify/scripts/powershell/audit-codebase.ps1 -Json …`; if the
+script lives under `.specify/presets/<id>/scripts/`, use that path.) If it is
+missing, say so and continue with Layer A only — do not improvise regexes.
 
-### 4. Interpret findings
+Several regex rules are **superseded** by a platform gate; when both report,
+keep the gate's verdict and drop the regex finding:
 
-Map every finding's directive back to the constitution:
+| Regex rule | Superseded by | Note |
+|---|---|---|
+| `TS.COMPILER.*` | `GATE.TYPECHECK` + `tsconfig.base.json` | flags already set; regex only checks per-package overrides |
+| `TS.TYPE.any-usage`, `TS.TYPE.ts-ignore`, `TS.TYPE.unchecked-as-cast` | `GATE.LINT` (Biome) where the rule is enabled | keep regex hits Biome does not cover |
+| `PERF.LOG.console-log-in-source` | `GATE.LINT` + `GATE.TYPECHECK` (`check:log-hygiene`) | |
+| `FE.IMG.raw-img-tag` | `apps/web/src/app/route-conventions.test.ts` | |
+| `SEC.SECRET.*` | `GATE.SECRETS` | regex still useful for `NEXT_PUBLIC_` misuse |
+| `INFRA.CI.missing-typecheck-job` | reading `ci.yml` (`typecheck:affected`) | |
+| `BE.DAL.missing-server-only` | — | applies to `apps/web/src/lib/server/*` only; `packages/db` and `apps/api` never ship to a browser — drop hits there as false positives |
+| `BE.ENV.direct-process-env-outside-validator` | — | `env.ts` modules are the validators |
+| `SEC.SQL.template-literal-query` | — | allowed inside `packages/db` Drizzle `sql\`\`` with bound params; a hit in `apps/*` is real |
 
-- `rule_id` prefix → constitution section (`TS.` → TypeScript Engineering · `FE.` → Frontend Behaviors · `BE.` → Backend Behaviors · `SEC.` → Security Behaviors · `PERF.` → Performance Behaviors · `INFRA.` → Infrastructure & Operations).
-- `phase` + `criticality` are already on the finding.
+Persist the script JSON to `.specify/audits/audit-<YYYYMMDD-HHMMSS>.json` and
+copy it to `.specify/audits/latest.json`. Add a sibling
+`gates-<timestamp>.json` with the Layer A results.
 
-Group findings:
+### 3. Layer C — Delta-Global pattern sweep (grep, cheap)
 
-1. **By severity** — `critical` first, then `high`, `medium`, `low`.
-2. **Within each severity, by section**, then by `rule_id`, then by file.
-3. **Collapse identical snippets** in the same file under one line if the script returned multiple lines.
+For the scope, grep and report each hit with `file:line`:
 
-### 5. Produce the report
+| ID | Pattern | Severity |
+|---|---|---|
+| `DG.CLICKHOUSE.app-tier` | `@clickhouse/` imported under `apps/api` or `apps/web` | Critical |
+| `DG.APOLLO.second-client` | `new ApolloClient(` outside `browser-client.ts` / `rsc.ts` | Critical |
+| `DG.GRAPHQL.cookie` | a cookie forwarded to `/graphql` | Critical |
+| `DG.BILLING.client-price` | price id / amount / return URL accepted from a GraphQL argument | Critical |
+| `DG.STRIPE.state-from-event` | `event.data.object.status` written to the DB | Critical |
+| `DG.METRIC.unbounded-label` | metric attributes using user/tenant/article id, URL, query, trace/session id | Critical |
+| `DG.TEMPORAL.polling` | `setInterval`/`while(true)` + sleep polling in services or workers | High |
+| `DG.PAGINATION.no-tiebreak` | `orderBy(` on a paginated list without `id` | High |
+| `DG.SELECT.wide-table` | `.from(articles)` / `select().from(` returning the full row in a list | High |
+| `DG.ENUM` | `enum ` in TS source | Medium |
+| `DG.REACTFC` | `React.FC` | Low |
+| `DG.SERVER_ACTION` | `"use server"` | High |
+| `DG.FLAG.prefix` | `ff-` in flag keys | Medium |
+| `DG.PKG.manager` | `npm `, `pnpm `, `yarn ` in scripts/docs/CI | Medium |
+| `DG.ACTION.tag-pin` | `uses: …@v` in `.github/workflows` | High |
 
-Output to the user in this exact structure:
+### 4. Report
 
-```
-# Codebase Quality Audit
+```markdown
+# Codebase Audit — <scope> — <date>
 
-**Scope**: <paths or "whole repository">
-**Files scanned**: <N>
-**Rules evaluated**: <N>
-**Findings**: <total> (critical: <c> · high: <h> · medium: <m> · low: <l>)
-**Persisted**: `.specify/audits/audit-YYYYMMDD-HHMMSS.json` (also `latest.json`)
+**Gates**: <n passed>/<n run> · **Regex findings**: <n> · **Pattern hits**: <n>
+**Persisted**: `.specify/audits/audit-…json`, `gates-…json`
 
-## Critical findings (block release)
+## Critical (blocks release)
+### <ID> — <rule / directive>
+*Constitution <principle> · source: gate | regex | pattern*
+- `file:line` — `snippet` / failing output line
+**Remediation:** …
 
-### <rule_id> — <directive>
-*Constitution: <section> / <phase> / <criticality> · Scope: <FE|BE|Both>*
+## High
+## Medium
+## Low
 
-- `<file>:<line>` — `<snippet>`
-- `<file>:<line>` — `<snippet>`
-
-**Remediation:** <one line from rule.remediation, expanded with one sentence of context>.
-
-### <next rule_id> ...
-
-## High findings (need exception or fix)
-
-... same shape ...
-
-## Medium findings
-
-... same shape ...
-
-## Low findings (track, don't block)
-
-... same shape ...
+## Gates not wired into CI
+## Superseded regex findings dropped (count per rule)
 
 ## Top 5 prioritized actions
-
-1. <action with specific file paths> — fixes <N> findings under <rule_id(s)>.
-2. ...
+1. <action, files> — clears <n> findings
 ```
 
-Rules with **zero findings** are not listed. If a section is empty at a severity level, omit that severity heading entirely.
+Omit empty severities. Never list a finding the tools did not return.
 
-### 6. Recommendations
+### 5. Recommendations
 
-End the report with a short, opinionated **next-step** block:
+- Any Critical → run `/speckit.audit.deep` before the next release.
+- A failing `GATE.*` on `main` → fix before any feature work: it means CI was red or not looked at (GitHub Free has no required checks).
+- `GATE_NOT_WIRED` → propose the `ci.yml` step.
+- Recurring classes (same rule in ≥ 3 modules) → propose a new `scripts/check-*.ts` gate rather than manual fixes.
 
-- If there are any **Critical** findings, recommend `/speckit.audit.deep` for cross-file confirmation before opening PRs.
-- If `TS.COMPILER.*` Criticals exist, recommend a single config-tightening PR before any code refactor (tighten the compiler, see what else breaks, then triage).
-- If `SEC.SESSION.localstorage-auth` or `SEC.SECRET.public-env-prefix` exists, recommend treating them as production incidents and rotating any exposed values.
-- If `BE.DAL.missing-server-only` exists, recommend a small PR that adds `import 'server-only';` to every flagged DAL module before any further backend work.
-- If no Criticals or Highs, congratulate the team and suggest scheduling the next audit per release cadence.
+## Post-Execution Hooks
 
-### 7. Validation before final output
-
-- Every finding listed in the report appears in the JSON file.
-- No invented findings; do not extrapolate beyond what the script returned.
-- File paths in the report match what the script returned (do not rewrite them).
-- If the script returned `findings_total: 0`, the report says so explicitly and recommends keeping the cadence.
-
-## Formatting & Style Requirements
-
-- Use Markdown headings exactly as shown above; do not invent new top-level sections.
-- Keep snippets to a single line; if the script returned a long line, the script already truncated to ~200 chars.
-- Wrap rationale and remediation lines around 100 characters; do not break paths or identifiers.
-- Avoid trailing whitespace.
-- The report is read by humans triaging the codebase — favor scannable bullets over paragraphs.
-
-## Post-Execution Checks
-
-**Check for extension hooks (after audit)**:
-
-Check if `.specify/extensions.yml` exists in the project root.
-- If it exists, read it and look for entries under the `hooks.after_audit` key.
-- If the YAML cannot be parsed or is invalid, skip hook checking silently and continue normally.
-- Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
-- For each remaining hook, do **not** attempt to interpret or evaluate hook `condition` expressions:
-  - If the hook has no `condition` field, or it is null/empty, treat the hook as executable.
-  - If the hook defines a non-empty `condition`, skip the hook and leave condition evaluation to the HookExecutor implementation.
-- For each executable hook, output the following based on its `optional` flag:
-  - **Optional hook** (`optional: true`):
-    ```
-    ## Extension Hooks
-
-    **Optional Hook**: {extension}
-    Command: `/{command}`
-    Description: {description}
-
-    Prompt: {prompt}
-    To execute: `/{command}`
-    ```
-  - **Mandatory hook** (`optional: false`):
-    ```
-    ## Extension Hooks
-
-    **Automatic Hook**: {extension}
-    Executing: `/{command}`
-    EXECUTE_COMMAND: {command}
-    ```
-- If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently.
+Check `.specify/extensions.yml` for `hooks.after_audit` entries and apply
+standard hook-processing.

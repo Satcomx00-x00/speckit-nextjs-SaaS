@@ -1,12 +1,12 @@
 ---
-description: Scan the repository (Markdown docs, package.json, tsconfig, Next.js structure, tooling, CI) and export a properly-structured Next.js project constitution at .specify/memory/constitution.md.
+description: Delta-Global constitution drift scan. Scans the platform (package.json scripts, tsconfig, Biome, depcruise, CI workflows, pre-commit hooks, ADRs, CLAUDE.md, recent specs) against the existing constitution and proposes a versioned AMENDMENT — semver bump plus a new Sync Impact Report whose every ✅ is verified — never a rewrite. Creates a constitution from scratch only when none exists.
 handoffs:
-  - label: Refine Constitution Interactively
+  - label: Refine the amendment interactively
     agent: speckit.constitution
-    prompt: Refine the scanned constitution. Adjust principles, criticality, or phases based on...
-  - label: Build Specification
-    agent: speckit.specify
-    prompt: Implement the feature specification based on the scanned constitution. I want to build...
+    prompt: Refine the proposed amendment. Adjust wording, scope or version bump based on…
+  - label: Sync agent context files
+    agent: speckit.docs.sync
+    prompt: Propagate the amended constitution to CLAUDE.md and AGENTS.md.
 ---
 
 ## User Input
@@ -15,286 +15,161 @@ handoffs:
 $ARGUMENTS
 ```
 
-You **MAY** consider the user input as additional context (e.g. "treat auth as Critical from P1", "default product is single-tenant", "ratification date 2026-05-18"). If empty, proceed with sensible defaults inferred from the scan.
+Optional context: a principle to focus on ("only Principle III"), a decision
+already taken ("ADR-0036 accepted"), `--dry-run` (report only, write
+nothing), `--apply` (write the amendment as PROPOSED without asking).
 
 ## Pre-Execution Checks
 
-**Check for extension hooks (before constitution scan)**:
+Check for `.specify/extensions.yml`. If present, look for hooks under
+`hooks.before_constitution` and apply standard hook-processing.
 
-- Check if `.specify/extensions.yml` exists in the project root.
-- If it exists, read it and look for entries under the `hooks.before_constitution` key.
-- If the YAML cannot be parsed or is invalid, skip hook checking silently and continue normally.
-- Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
-- For each remaining hook, do **not** attempt to interpret or evaluate hook `condition` expressions:
-  - If the hook has no `condition` field, or it is null/empty, treat the hook as executable.
-  - If the hook defines a non-empty `condition`, skip the hook and leave condition evaluation to the HookExecutor implementation.
-- For each executable hook, output the following based on its `optional` flag:
-  - **Optional hook** (`optional: true`):
-    ```
-    ## Extension Hooks
+## Ground rules
 
-    **Optional Pre-Hook**: {extension}
-    Command: `/{command}`
-    Description: {description}
-
-    Prompt: {prompt}
-    To execute: `/{command}`
-    ```
-  - **Mandatory hook** (`optional: false`):
-    ```
-    ## Extension Hooks
-
-    **Automatic Pre-Hook**: {extension}
-    Executing: `/{command}`
-    EXECUTE_COMMAND: {command}
-
-    Wait for the result of the hook command before proceeding to the Outline.
-    ```
-- If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently.
+- **Amend, never overwrite.** `.specify/memory/constitution.md` is a governed
+  document (v3.x, five Sync Impact Reports at the top, newest first). Existing
+  principles, wording and history stay unless the amendment explicitly changes
+  them. Previous Sync Impact Reports are never edited.
+- **A ✅ is a verified fact.** The v3.1.1 report recorded the lesson: two
+  follow-ups claimed "landed" had never been made. Every dependent-artifact
+  line you mark ✅ must cite the file and the line you read that proves it;
+  otherwise mark it ⚠ (pending, with what remains) or ⃠ (deliberately not
+  changed — historical record).
+- **Evidence over intent.** A rule the constitution states but nothing
+  enforces is reported as a gap, not assumed true. A practice the code follows
+  but the constitution does not state is a candidate addition, not a violation.
+- **Precedence**: constitution → `docs/adr/` (ADR-0000 first) → `CLAUDE.md` →
+  `.specify/presets/delta-global/CONVENTIONS.md`. A disagreement between them
+  is itself a finding.
 
 ## Outline
 
-You are producing the project constitution at `.specify/memory/constitution.md` by **scanning the repository for evidence** and then mapping that evidence onto the Next.js phased / criticality-tagged constitution template.
+### 1. Load the current constitution
 
-The template lives in the resolution stack as `constitution-template`. With this preset installed, it resolves to the Next.js variant under `.specify/presets/nextjs/templates/constitution-template.md`. Use that file as the structural skeleton; do **not** invent new sections or reorder existing ones.
+Read `.specify/memory/constitution.md`: version, ratified/last-amended dates,
+principles I–VI with their MUSTs, Technology Stack tables, Development
+Workflow, Governance, and the most recent Sync Impact Report (its ⚠ items and
+Deferred TODOs are the first things to re-check).
 
-Follow this execution flow exactly:
+If the file does not exist, switch to **bootstrap mode**: draft v1.0.0 from
+the scan using `.specify/templates/constitution-template.md` and the
+conventions file, mark it PROPOSED, and skip to step 6.
 
-### 1. Run the scan script
+### 2. Scan the repository
 
-Execute the scan script and capture its JSON output. The script lives under the installed preset's scripts directory; both shell variants accept `--json` (default) and `--text`.
+Run the scan script if installed (`.specify/scripts/bash/scan-repo.sh --json`,
+or the PowerShell equivalent) for the inventory, then collect directly:
 
-- **POSIX shell**:
-  ```bash
-  bash .specify/presets/nextjs/scripts/bash/scan-repo.sh --json
-  ```
-- **PowerShell**:
-  ```powershell
-  pwsh .specify/presets/nextjs/scripts/powershell/scan-repo.ps1 -Json
-  ```
+| Evidence | Where |
+|---|---|
+| Scripts & gates | root `package.json` scripts (`check:*`, `typecheck`, `test`, `depcruise`), `turbo.json` task deps |
+| Compiler | `tsconfig.base.json` flags |
+| Lint | `biome.json` (rules on/off) |
+| Dependency rules | `dependency-cruiser.config.cjs` rule names |
+| CI reality | `.github/workflows/ci.yml`, `e2e.yml`, `release.yml`, `gitleaks.yml` — which commands run, on which triggers, with which thresholds (`diff-cover --fail-under`) |
+| Hooks | `.pre-commit-config.yaml` (stage per hook), `commitlint.config.ts` |
+| Decisions | `docs/adr/*.md` titles + Status lines; app ADRs under `apps/*/docs/adr/` |
+| Agent guidance | `CLAUDE.md` (Architecture, Forbidden Patterns, Approved External Services, Testing) |
+| Practice | the three most recent `specs/*/plan.md` + `tasks.md` (what the team actually does: tenancy model declared, story grouping, one commit per phase, `@critical` naming) |
 
-If the preset path is not present (preset was added with a non-default install location), fall back to invoking the file by its location on disk relative to `$REPO_ROOT`. Do not silently skip the scan — if the script cannot be found or fails, stop and tell the user.
+### 3. Diff constitution ↔ reality
 
-The script output conforms to the schema documented in `.specify/presets/nextjs/scripts/SCHEMA.md` (`schema_version: "1.0"`). Treat it as your **inventory** for the rest of this command. Do not run the scan more than once per invocation.
+For each principle and table row, classify:
 
-### 2. Read the relevant Markdown evidence
+| Class | Meaning | Example |
+|---|---|---|
+| `ENFORCED` | stated and a gate enforces it | field auth — `check:field-auth` via typecheck |
+| `STATED_UNENFORCED` | stated, nothing checks it | "every mutation has `@critical` tests" — no script counts them |
+| `PRACTICED_UNSTATED` | done consistently, not in the constitution | expand-only migrations + `Allow-Contract-Migration:` trailer |
+| `CONTRADICTED` | the repo or another source of truth says otherwise | "PRs require one approving review" vs ADR-0006 (no required reviewers); "hand-written SQL forbidden" vs the `--custom` RLS migrations |
+| `STALE` | names a removed tool/path | tRPC, `analytics-db`, LGTM, Lefthook |
 
-From the scan's `markdown.known_docs` list, read the following when present (in this order):
+Always re-check these known-sensitive areas: tenancy models (owner-scoped vs
+org-scoped), gate list in Principle III vs `ci.yml`, coverage threshold and its
+date, E2E gating, flag granularity (global only), the admin realm (ADR-0013
+Addendum 1), migration rules vs `check:migration-expand-contract`, approved
+external services vs ADRs.
 
-1. `README.md` — purpose, scope, install/run instructions, screenshots.
-2. `ARCHITECTURE.md` — architectural intent if it exists.
-3. `CONTRIBUTING.md` — workflow norms, branch rules, review rules.
-4. `SECURITY.md` — declared security posture.
-5. `AGENTS.md` / `CLAUDE.md` / `.github/copilot-instructions.md` — existing agent directives (will be re-aligned with the new constitution).
-6. Up to 10 additional `.md` files from `markdown.files` that look like product/engineering specs (paths under `docs/`, `specs/`, or with headings that match "Architecture", "Design", "Spec", "RFC", "ADR").
+### 4. Decide the amendment and its version
 
-Skip files larger than ~50 KB; the scan already gives you size, head excerpt, and headings. Use those summaries when the file is too large to read in full.
+- **MAJOR** — a principle removed or redefined incompatibly (something that
+  complied stops complying).
+- **MINOR** — a principle or obligation added or materially widened.
+- **PATCH** — wording corrected to match reality; no obligation changed.
 
-### 3. Derive concrete values from the inventory
+One amendment per concern is better than a grab-bag: if findings span
+unrelated principles, propose the highest-value one and list the others as
+deferred amendments.
 
-From `inventory.package_json`:
+### 5. Draft the change
 
-- `[PROJECT_NAME]` ← `package_json.name` if present; otherwise the basename of `repo_root`.
-- Capture `version`, `private`, `package_manager`, `scripts`, `next_version`, `react_version`, `ts_version`, and `node_engine` — surface them in the Sync Impact Report but do **not** rewrite principle wording around them (the constitution is behavioral, not stack-locked).
-- Use `package_json.signals` to decide which **evidence notes** to add to the Sync Impact Report (e.g. "ESLint detected", "Zod detected; schema validation pattern available", "Argon2 detected; password hashing path available"). **Do not promote tooling to principles.** Principles stay behavioral.
+Edit only the affected principle/section text. Keep the house style: MUST /
+MUST NOT, a short "Why" where the rule is non-obvious, ADR references in
+parentheses. Update `Last Amended` and the version line.
 
-From `inventory.tsconfig`:
+### 6. Write the new Sync Impact Report
 
-- If `strict !== true`, `noUncheckedIndexedAccess !== true`, or `exactOptionalPropertyTypes !== true`, mark the corresponding **TypeScript Engineering / Compiler & Project Config / P1 / Critical** directives as **NOT MET** in the Sync Impact Report.
-- If `noImplicitOverride`, `noFallthroughCasesInSwitch`, `noImplicitReturns`, or `forceConsistentCasingInFileNames` are missing or `false`, flag the corresponding **P1 / High** directives as **NOT MET**.
-- If `tsconfig.present === false`, flag the entire **TypeScript Engineering** section as **UNVERIFIED** and record a P1 Critical follow-up to introduce a strict `tsconfig.json`.
-
-From `inventory.nextjs`:
-
-- If `has_app_dir === true`, App Router is in use — Frontend Server-First directives apply as written.
-- If `has_pages_dir === true` and `has_app_dir === false`, add a Sync Impact Report note: "Pages Router detected; constitution principles are written for App Router. Document the migration path or scope an exception with an expiry."
-- If `has_middleware === true`, add a Sync Impact Report note linking to the Security principle "Never rely on middleware as a security boundary."
-
-From `inventory.directives`:
-
-- `use_client_files` and `use_server_files` go into the Sync Impact Report as raw counts.
-- `server_only_imports === 0` while `use_server_files > 0` → flag the Backend P1 directive "Mark sensitive modules `server-only` so client imports fail the build" as **NOT MET**.
-
-From `inventory.data_access.has_dal_directory`:
-
-- If `false`, flag the Backend P1 Critical directive "Centralize all data access behind a single Data Access Layer" as **NOT MET**.
-
-From `inventory.tooling`, `inventory.testing`, `inventory.environment`, and `inventory.git`:
-
-- Missing CI workflows → flag the Infrastructure P1 High directive "CI runs typecheck, lint, test, and build on every PR" as **NOT MET**.
-- Missing `.env.example` (or similar) → note as a Medium gap in the Sync Impact Report.
-- Missing pinned Node version (`node_version_file` is null and `package_json.node_engine` is null) → flag the Infrastructure P1 Critical directive "Reproducible builds: lockfile committed, pinned runtime version" as **PARTIALLY MET** if a lockfile exists, otherwise **NOT MET**.
-
-### 4. Decide the operating phase
-
-If `inventory.constitution.exists === false` and no production deployment evidence is found in scanned docs, default to **P1 — Foundation** as the current phase. Otherwise infer the phase from evidence:
-
-- Mentions of "paying customers", "production users", "SLA", "PCI/HIPAA/SOC2" in scanned docs → **P3 — Hardening** at minimum.
-- A live production URL in `README.md` or deploy workflow → **P2 — MVP** at minimum.
-- Otherwise → **P1 — Foundation**.
-
-Record the chosen phase, the evidence trail, and a one-line justification at the top of the Sync Impact Report. If the user input from `$ARGUMENTS` explicitly states a phase, use that and note it as **user-overridden**.
-
-### 5. Draft the constitution
-
-Resolve the Next.js constitution template:
-
-- Prefer `.specify/presets/nextjs/templates/constitution-template.md`.
-- If unavailable, fall back to `.specify/templates/constitution-template.md`.
-
-Fill the template precisely:
-
-- Replace `[PROJECT_NAME]` everywhere.
-- Replace `[CONSTITUTION_VERSION]`, `[RATIFICATION_DATE]`, `[LAST_AMENDED_DATE]`:
-  - `CONSTITUTION_VERSION`: if no prior constitution, start at `1.0.0`. If amending, bump per the existing rules (MAJOR for principle redefinition, MINOR for additions, PATCH for clarifications).
-  - `RATIFICATION_DATE`: if the user provided one, use it. Else use today (ISO `YYYY-MM-DD`) and note "first ratification by scan."
-  - `LAST_AMENDED_DATE`: today.
-- **Do not rewrite the Frontend / Backend / Security / Performance / TypeScript & Code Quality / Infrastructure tables.** They are the source of truth. The scan informs the Sync Impact Report, not the matrix.
-- **Do not add technology names to the Core Principles section.** The constitution stays behavioral.
-
-### 6. Produce the Sync Impact Report
-
-Prepend an HTML comment block at the top of the constitution containing:
+Prepend (above the previous ones) an HTML comment in the established format:
 
 ```
 <!--
-Sync Impact Report — generated by /speckit.constitution.scan
------------------------------------------------------------
-Scan timestamp:       <ISO UTC>
-Schema version:       <inventory.schema_version>
-Repo root:            <inventory.repo_root>
-Chosen phase:         P1 | P2 | P3 | P4   (justification: ...)
-Constitution version: <old> → <new>   (bump rationale: ...)
-Ratification date:    <ISO>
-Last amended date:    <ISO>
+  Sync Impact Report — v<old> → v<new>
 
-## Inventory snapshot
-- Project name:        ...
-- Package manager:     ...
-- Next.js version:     ...
-- React version:       ...
-- TypeScript version:  ...
-- Node engine:         ...
-- App Router:          true|false
-- Pages Router:        true|false
-- Middleware:          true|false
-- Route handlers:      <n>
-- "use client" files:  <n>
-- "use server" files:  <n>
-- server-only imports: <n>
-- DAL directory:       true|false
-- ESLint / Prettier / Biome: ...
-- CI workflows:        <count>
-- .env example files:  <list or "none">
-- Node version pinned: <file or "no">
-- Tests directory:     true|false
-- Constitution found:  true|false
-- Markdown files:      <total> (listed <n>, truncated <bool>)
+  Version change: <old> → <new>
+  Status: PROPOSED <YYYY-MM-DD>, in the PR that carries it; accepted when that
+  PR is approved and merged, per Governance.
+  Rationale: <MAJOR|MINOR|PATCH> — <why this bump, what stops/starts complying>
 
-## Directive compliance (from scan)
-- [Frontend / P1 / Critical] Default to Server Components — <MET|UNVERIFIED|NOT MET> (<evidence>)
-- [Backend / P1 / Critical] Single Data Access Layer — <MET|NOT MET> (<evidence>)
-- [Backend / P1 / Critical] `server-only` on sensitive modules — <MET|NOT MET> (<evidence>)
-- [TS Engineering / Compiler / P1 / Critical] `strict: true` — <MET|NOT MET> (<evidence>)
-- [TS Engineering / Compiler / P1 / Critical] `noUncheckedIndexedAccess` — <MET|NOT MET> (<evidence>)
-- [TS Engineering / Compiler / P1 / Critical] `exactOptionalPropertyTypes` — <MET|NOT MET> (<evidence>)
-- [TS Engineering / Compiler / P1 / High]     `noImplicitOverride`, `noFallthroughCasesInSwitch`, `noImplicitReturns`, `forceConsistentCasingInFileNames` — <MET|PARTIAL|NOT MET> (<evidence>)
-- [TS Engineering / Type System / P1 / Critical] No `any`, no unchecked `as` — <MET|UNVERIFIED|NOT MET> (<evidence: lint config, raw greps>)
-- [Infra / P1 / Critical] Reproducible builds + pinned runtime — <MET|PARTIAL|NOT MET> (<evidence>)
-- [Infra / P1 / High] CI runs typecheck/lint/test/build — <MET|NOT MET> (<evidence>)
-- ... include every Critical P1 directive at minimum; add Highs when evidence speaks to them.
+  Principles modified:
+    - <principle> → <old statement> now reads <new statement>.
+      Why: <evidence: file:line / ADR / command output>
 
-## Markdown evidence consulted
-- README.md (...)
-- ARCHITECTURE.md (...)
-- ...
+  Sections modified: … | Sections added / removed: …
 
-## Follow-ups (TODO)
-- TODO(<area>): <action>, owner=<unknown>, due=<next release>
+  Dependent artifacts:
+    - ✅ <path> — <what was changed> (verified: <path:line>)
+    - ⚠ <path> — <what still has to change>
+    - ⃠ <path> — left as written (historical record)
+
+  Deferred TODOs: <each with an owner or "none">
 -->
 ```
 
-A directive's status is one of:
+Dependent artifacts to consider every time: `CLAUDE.md`,
+`docs/adr/0000-stack-reference.md`, `.specify/templates/{spec,plan,tasks}-template.md`,
+installed preset templates, `docs/feature-dev-workflow.md`, any `scripts/check-*.ts`
+that should enforce the new rule.
 
-- **MET** — direct evidence in the scan supports it.
-- **NOT MET** — direct evidence shows it is violated or missing.
-- **PARTIAL** — some but not all sub-criteria are evidenced.
-- **UNVERIFIED** — no signal either way; mark for follow-up.
+### 7. Validate before writing
 
-Always emit a status for every **Critical** directive in P1 and any earlier phase relative to the chosen phase. Highs are listed when the scan speaks to them.
+- No placeholder tokens left; dates ISO; version bumped exactly once.
+- Every ✅ has a `verified:` citation you actually read.
+- No previous Sync Impact Report modified.
+- Every MUST is testable (names what checks it, or is listed as
+  `STATED_UNENFORCED` in the report).
 
-### 7. Consistency propagation
+### 8. Write and report
 
-After writing the constitution:
+Unless `--dry-run`, write the file (Status PROPOSED unless the user said the
+amendment is accepted). Then print:
 
-- Read `.specify/templates/plan-template.md`, `.specify/templates/spec-template.md`, `.specify/templates/tasks-template.md`, and every command file under `.specify/templates/commands/*.md`. If any reference principles that contradict this constitution (e.g. assume Pages Router, ignore DAL, treat caching as implicit), flag them in the Sync Impact Report under **Templates requiring updates** with ✅/⚠ markers — do not silently edit them.
-- Read `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md` (whichever exist) and confirm they point at `.specify/memory/constitution.md` and (if available) `.specify/presets/nextjs/templates/agent-context.md`. If they don't, flag a follow-up to wire them — do not auto-rewrite the agent context here.
+```markdown
+## Constitution scan — v<old> → v<new> (<bump>)
+| Class | Count |
+| ENFORCED | … | STATED_UNENFORCED | … | PRACTICED_UNSTATED | … | CONTRADICTED | … | STALE | … |
 
-### 8. Validation before write
+### Amendment proposed
+<principle → change, one line each>
 
-Before overwriting `.specify/memory/constitution.md`:
+### Gaps not addressed by this amendment
+<each with a suggested gate or follow-up amendment>
 
-- No remaining unexplained `[BRACKET]` tokens.
-- Version line matches the Sync Impact Report.
-- Dates in ISO `YYYY-MM-DD` format.
-- Principle wording is declarative ("MUST", "SHALL"), not vague ("should consider").
-- Every Critical directive has a status in the Sync Impact Report.
+### Next
+- Open a PR titled `docs(config): constitution v<new> — <summary>`
+- Run `/speckit.docs.sync` after it merges
+```
 
-If `.specify/memory/` does not exist, create it.
+## Post-Execution Hooks
 
-### 9. Write the constitution
-
-Write the completed file to `.specify/memory/constitution.md` (overwrite if present).
-
-### 10. Output summary
-
-Print to the user:
-
-- New version and bump rationale (or `1.0.0` if first ratification).
-- Chosen operating phase and justification.
-- Count of Critical directives **MET / NOT MET / PARTIAL / UNVERIFIED**.
-- A 3–7 line summary of the most urgent follow-ups (P1 Critical "NOT MET" first).
-- The exact path to the written file: `.specify/memory/constitution.md`.
-- A suggested commit message, e.g.:
-  `docs(constitution): scan-derived ratification v1.0.0 — phase P1, <n> directives MET, <m> NOT MET`
-
-## Formatting & Style Requirements
-
-- Use Markdown headings exactly as in the Next.js constitution template (do not demote/promote levels).
-- Keep a single blank line between sections.
-- Wrap rationale lines around 100 characters where readable; do not hard-break sentences awkwardly.
-- Avoid trailing whitespace.
-- The Sync Impact Report is an HTML comment — keep its content scannable; bullets over paragraphs.
-
-## Post-Execution Checks
-
-**Check for extension hooks (after constitution scan)**:
-
-Check if `.specify/extensions.yml` exists in the project root.
-- If it exists, read it and look for entries under the `hooks.after_constitution` key.
-- If the YAML cannot be parsed or is invalid, skip hook checking silently and continue normally.
-- Filter out hooks where `enabled` is explicitly `false`. Treat hooks without an `enabled` field as enabled by default.
-- For each remaining hook, do **not** attempt to interpret or evaluate hook `condition` expressions:
-  - If the hook has no `condition` field, or it is null/empty, treat the hook as executable.
-  - If the hook defines a non-empty `condition`, skip the hook and leave condition evaluation to the HookExecutor implementation.
-- For each executable hook, output the following based on its `optional` flag:
-  - **Optional hook** (`optional: true`):
-    ```
-    ## Extension Hooks
-
-    **Optional Hook**: {extension}
-    Command: `/{command}`
-    Description: {description}
-
-    Prompt: {prompt}
-    To execute: `/{command}`
-    ```
-  - **Mandatory hook** (`optional: false`):
-    ```
-    ## Extension Hooks
-
-    **Automatic Hook**: {extension}
-    Executing: `/{command}`
-    EXECUTE_COMMAND: {command}
-    ```
-- If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently.
+Check `.specify/extensions.yml` for `hooks.after_constitution` entries and
+apply standard hook-processing.
