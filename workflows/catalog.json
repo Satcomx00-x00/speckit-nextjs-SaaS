@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-07-26T00:00:00Z",
+  "updated_at": "2026-10-24T00:00:00Z",
   "catalog_url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/catalog.json",
   "workflows": {
     "speckit": {
@@ -17,45 +17,61 @@
     },
     "saas-feature": {
       "id": "saas-feature",
-      "name": "SaaS Feature Delivery Cycle",
-      "description": "Production-grade feature delivery: intake-driven scope → RFC with Service Interaction Map → schema → DAL → services → API → UI → E2E → quality gates → verify → progressive rollout → observability. Tool commands are inputs — adapts to any Next.js/TS SaaS.",
+      "name": "SaaS Feature Delivery Cycle (Delta-Global)",
+      "description": "Delta-Global feature delivery: optional research → spec + clarify → plan (GraphQL directives, owner-scoped, global flag, Service Interaction Map) → tasks by user story → checkpointed tests-first implementation → real CI gate battery → evidence-based verify → alerts/dashboards in platform-infra → release(<app>) → staging pin → flag ON → production pin + ArgoCD sync → flag retirement and retro.",
       "author": "satcom",
-      "version": "1.2.0",
+      "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/saas-feature/workflow.yml",
       "tags": [
         "saas",
-        "multi-tenant",
+        "delta-global",
+        "graphql",
         "full-cycle",
-        "nextjs",
-        "verify"
+        "verify",
+        "research"
       ]
     },
     "hotfix": {
       "id": "hotfix",
-      "name": "Hotfix Delivery",
-      "description": "Fast-path bug fix: scope → implement → regression test → quality gates → verify → staging → prod with mandatory gate and blameless postmortem. Skips RFC and feature-flag ceremony.",
+      "name": "Hotfix Delivery (Delta-Global)",
+      "description": "Mitigate first (flag OFF or pin back) → scope → failing regression test → minimal fix → gate battery → verify → release(<app>) → staging → production pin → monitor → blameless postmortem with owned actions.",
       "author": "satcom",
-      "version": "1.1.0",
+      "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/hotfix/workflow.yml",
       "tags": [
         "hotfix",
         "bugfix",
         "fast-path",
-        "postmortem"
+        "postmortem",
+        "delta-global"
       ]
     },
     "migration-only": {
       "id": "migration-only",
-      "name": "DB Migration Delivery",
-      "description": "Safe path for schema-only changes with explicit expand-contract phases: scope → SQL review gate → apply local → quality gates → migration record → staging verify → prod-gate (DEPLOY confirm) → post-deploy verify.",
+      "name": "DB Migration Delivery (Delta-Global)",
+      "description": "Schema-only change shaped by the api db-migrate init container (one transaction, previous release serving, no backups): expand / contract / backfill / index / constraint, check:migration-* gates, Allow-Contract-Migration trailer with evidence, pg_dumpall snapshots, migration record, api-first release.",
       "author": "satcom",
-      "version": "1.2.0",
+      "version": "2.0.0",
       "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/migration-only/workflow.yml",
       "tags": [
         "migration",
         "database",
-        "schema",
-        "expand-contract"
+        "expand-contract",
+        "delta-global"
+      ]
+    },
+    "feature-research": {
+      "id": "feature-research",
+      "name": "Feature Research → Spec (Delta-Global)",
+      "description": "Idea → /speckit.research (grounded in the platform, then prior art, 2026 state of the art, stack-compatible options, failure modes, compliance, cost — cited) → go/park/reject gate → spec + clarify ready for saas-feature.",
+      "author": "satcom",
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/Satcomx00-x00/speckit-nextjs-SaaS/main/workflows/feature-research/workflow.yml",
+      "tags": [
+        "research",
+        "discovery",
+        "spec",
+        "delta-global"
       ]
     }
   }
